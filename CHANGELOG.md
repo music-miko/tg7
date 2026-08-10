@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- **Direct-DB media lookup (`src/core/dl/media_db.go`)** — the bot no longer
+  opens its own MongoDB connection to the shared ArcMusic `arcapi.medias`
+  collection to shortcut Telegram-channel cache hits. The ArcMusic API's
+  `/youtube/v2/download` endpoint now performs this same cache check itself
+  and resolves inline (no `job_id`, no polling) when a track is already
+  cached — either as a public `https://t.me/<username>/<msg_id>` link or a
+  CDN URL — so the bot's copy of this logic was redundant. `DB_URI` and
+  `MEDIA_CHANNEL_ID` are no longer read from the environment.
+- `arcMusic.createJob` / `arcJobResponse` (`src/core/dl/arcmusic.go`) —
+  replaced by `requestDownload` / `arcDownloadResponse`, which understands
+  the API's unified cache-hit-or-queued response instead of always expecting
+  a job to be created. `pollJob` now reads the job result's `cdn` field
+  instead of `public_url`.
+
 ## v1.1.0 — Autoplay, Force-Play, and Rich Navigation
 
 ### New

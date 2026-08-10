@@ -34,8 +34,6 @@ var (
 	ApiKey              = os.Getenv("API_KEY")
 	ArcApiUrl           = getEnv("ARC_API_URL", "https://api.arcmusic.fun")
 	ArcApiKey           = os.Getenv("ARC_API_KEY")
-	DbUri               = os.Getenv("DB_URI")
-	MediaChannelId      = getEnvInt64("MEDIA_CHANNEL_ID", 0)
 	OwnerId             = getEnvInt64("OWNER_ID", 0)
 	LoggerId            = getEnvInt64("LOGGER_ID", 0)
 	Proxy               = os.Getenv("PROXY")
