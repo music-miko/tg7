@@ -25,8 +25,7 @@ var (
 	arcVideoSuccess  int64
 	arcVideoFailed   int64
 
-	arcCacheHits       int64 // resolved from the local/Telegram direct-DB cache, no network call
-	arcAPISuccess      int64 // resolved via the real ArcMusic job pipeline (create -> poll -> save)
+	arcAPISuccess      int64 // resolved via the ArcMusic API (cache hit or full job pipeline — both are just an API request now)
 	arcAPIFailed       int64
 	arcFallbackToYtDlp int64 // ArcMusic failed and yt-dlp had to take over
 	arcSearchAttempts  int64
@@ -52,21 +51,18 @@ func recordArcAttempt(video bool) {
 	}
 }
 
-// recordArcSuccess marks a successful resolve(), distinguishing a local
-// cache hit (no API call) from an actual ArcMusic API round-trip.
-func recordArcSuccess(video, cacheHit bool, dur time.Duration) {
+// recordArcSuccess marks a successful resolve() via the ArcMusic API. Cache
+// hits and full job-pipeline resolves are no longer distinguished — a cache
+// hit is just a fast API request now, not a special no-network path.
+func recordArcSuccess(video bool, dur time.Duration) {
 	if video {
 		atomic.AddInt64(&arcVideoSuccess, 1)
 	} else {
 		atomic.AddInt64(&arcAudioSuccess, 1)
 	}
 
-	if cacheHit {
-		atomic.AddInt64(&arcCacheHits, 1)
-	} else {
-		atomic.AddInt64(&arcAPISuccess, 1)
-		atomic.AddInt64(&arcTotalResolveNs, dur.Nanoseconds())
-	}
+	atomic.AddInt64(&arcAPISuccess, 1)
+	atomic.AddInt64(&arcTotalResolveNs, dur.Nanoseconds())
 
 	arcStatsMu.Lock()
 	arcLastSuccessAt = time.Now()
@@ -112,7 +108,6 @@ type ArcStatsSnapshot struct {
 	AudioAttempts, AudioSuccess, AudioFailed int64
 	VideoAttempts, VideoSuccess, VideoFailed int64
 
-	CacheHits       int64
 	APISuccess      int64
 	APIFailed       int64
 	FallbackToYtDlp int64
@@ -197,7 +192,6 @@ func GetArcStats() ArcStatsSnapshot {
 		VideoSuccess:  atomic.LoadInt64(&arcVideoSuccess),
 		VideoFailed:   atomic.LoadInt64(&arcVideoFailed),
 
-		CacheHits:       atomic.LoadInt64(&arcCacheHits),
 		APISuccess:      apiSuccess,
 		APIFailed:       atomic.LoadInt64(&arcAPIFailed),
 		FallbackToYtDlp: atomic.LoadInt64(&arcFallbackToYtDlp),
@@ -221,7 +215,6 @@ func ResetArcStats() {
 	atomic.StoreInt64(&arcVideoAttempts, 0)
 	atomic.StoreInt64(&arcVideoSuccess, 0)
 	atomic.StoreInt64(&arcVideoFailed, 0)
-	atomic.StoreInt64(&arcCacheHits, 0)
 	atomic.StoreInt64(&arcAPISuccess, 0)
 	atomic.StoreInt64(&arcAPIFailed, 0)
 	atomic.StoreInt64(&arcFallbackToYtDlp, 0)

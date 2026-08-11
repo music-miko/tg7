@@ -56,7 +56,6 @@ func ytStatsHandler(c *td.Client, m *td.Message) error {
 	sb.WriteString("</table>\n\n")
 
 	sb.WriteString("<blockquote expandable>\n")
-	sb.WriteString(fmt.Sprintf("<b>Cache hits (no API call):</b> <code>%d</code>\n", stats.CacheHits))
 	sb.WriteString(fmt.Sprintf("<b>Resolved via API:</b> <code>%d</code>\n", stats.APISuccess))
 	sb.WriteString(fmt.Sprintf("<b>API failures:</b> <code>%d</code>\n", stats.APIFailed))
 	sb.WriteString(fmt.Sprintf("<b>Fell back to yt-dlp:</b> <code>%d</code>\n", stats.FallbackToYtDlp))

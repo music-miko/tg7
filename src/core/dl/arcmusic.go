@@ -315,9 +315,9 @@ func (a *arcMusic) resolve(videoID string, isVideo bool) (string, error) {
 		}
 
 		var cdn string
-		cacheHit := resp.JobId == ""
-
-		if cacheHit {
+		if resp.JobId == "" {
+			// Resolved inline by the API (no job needed) — same as any
+			// other successful API request, just a fast one.
 			cdn = resp.Result.Cdn
 		} else {
 			cdn, err = a.pollJob(resp.JobId)
@@ -331,11 +331,13 @@ func (a *arcMusic) resolve(videoID string, isVideo bool) (string, error) {
 			}
 		}
 
+		slog.Info("ArcMusic URL received", "video_id", videoID, "cdn", cdn)
+
 		// A public Telegram post link is downloaded natively via the bot's
 		// own Telegram session further down the pipeline (see
 		// downloadViaWrapper's TelegramMessageRegex check in downloader.go).
 		if utils.TelegramMessageRegex.MatchString(cdn) {
-			recordArcSuccess(isVideo, cacheHit, time.Since(start))
+			recordArcSuccess(isVideo, time.Since(start))
 			return cdn, nil
 		}
 
@@ -358,7 +360,7 @@ func (a *arcMusic) resolve(videoID string, isVideo bool) (string, error) {
 			continue
 		}
 
-		recordArcSuccess(isVideo, cacheHit, time.Since(start))
+		recordArcSuccess(isVideo, time.Since(start))
 		return filePath, nil
 	}
 
