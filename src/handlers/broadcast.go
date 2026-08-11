@@ -25,6 +25,48 @@ var (
 	broadcastInProgress atomic.Bool
 )
 
+// isUserGoneError reports whether err indicates the target user has blocked
+// the bot (isBlocked=true) or their account no longer exists (isBlocked=false,
+// meaning deleted). Matching is done on the error text, same convention used
+// elsewhere in this codebase (see vc/userbot.go, vc/leave_all.go) since the
+// underlying td/MTProto error type doesn't expose a stable error code here.
+func isUserGoneError(err error) (isBlocked, isDeleted bool) {
+	if err == nil {
+		return false, false
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "USER_IS_BLOCKED"), strings.Contains(msg, "bot was blocked by the user"):
+		return true, false
+	case strings.Contains(msg, "USER_IS_DELETED"), strings.Contains(msg, "USER_DEACTIVATED"), strings.Contains(msg, "user is deactivated"):
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// isChatGoneError reports whether err indicates the target chat is no longer
+// reachable (bot kicked/left, chat deleted, or otherwise inaccessible).
+func isChatGoneError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "CHAT_WRITE_FORBIDDEN"),
+		strings.Contains(msg, "CHANNEL_PRIVATE"),
+		strings.Contains(msg, "USER_NOT_PARTICIPANT"),
+		strings.Contains(msg, "PEER_ID_INVALID"),
+		strings.Contains(msg, "CHAT_ID_INVALID"),
+		strings.Contains(msg, "bot was kicked"),
+		strings.Contains(msg, "chat not found"),
+		strings.Contains(msg, "group chat was deleted"):
+		return true
+	default:
+		return false
+	}
+}
+
 func getFloodWait(err error) int {
 	if err == nil {
 		return 0
@@ -112,8 +154,11 @@ Examples:
 		}
 	}
 
-	chats, _ := db.Instance.GetAllChats()
-	users, _ := db.Instance.GetAllUsers()
+	// Use the active (non-blocked/deleted/invalid) lists so we don't burn
+	// time and flood-wait budget re-sending to targets already known to be
+	// unreachable.
+	chats, _ := db.Instance.GetActiveChats()
+	users, _ := db.Instance.GetActiveUsers()
 
 	groupsMap := make(map[int64]bool)
 	for _, id := range chats {
@@ -146,13 +191,13 @@ Examples:
 		defer broadcastInProgress.Store(false)
 
 		var failedBuilder strings.Builder
-		count, ucount := 0, 0
+		count, ucount, skipped := 0, 0, 0
 
 		for _, chatID := range targets {
 			if broadcastCancelFlag.Load() {
 				_, _ = sentMsg.EditText(
 					c,
-					fmt.Sprintf("Broadcast stopped.\nGroups: %d\nUsers: %d", count, ucount),
+					fmt.Sprintf("Broadcast stopped.\nGroups: %d\nUsers: %d\nSkipped (blocked/deleted/invalid): %d", count, ucount, skipped),
 					nil,
 				)
 				return
@@ -180,11 +225,30 @@ Examples:
 					time.Sleep(time.Duration(wait+30) * time.Second)
 					continue
 				}
+
+				isGroup := groupsMap[chatID]
+				if isGroup && isChatGoneError(errSend) {
+					_ = db.Instance.MarkChatInvalid(chatID)
+					skipped++
+					continue
+				}
+				if !isGroup {
+					if blocked, deleted := isUserGoneError(errSend); blocked || deleted {
+						if blocked {
+							_ = db.Instance.MarkUserBlocked(chatID)
+						} else {
+							_ = db.Instance.MarkUserDeleted(chatID)
+						}
+						skipped++
+						continue
+					}
+				}
+
 				failedBuilder.WriteString(fmt.Sprintf("%d - %v\n", chatID, errSend))
 			}
 		}
 
-		text := fmt.Sprintf("Broadcast ended.\nGroups: %d\nUsers: %d", count, ucount)
+		text := fmt.Sprintf("Broadcast ended.\nGroups: %d\nUsers: %d\nSkipped (blocked/deleted/invalid): %d", count, ucount, skipped)
 		failedStr := failedBuilder.String()
 
 		if failedStr != "" {

@@ -182,8 +182,14 @@ func statsHandler(c *td.Client, m *td.Message) error {
 
 	stats := gatherAppStats()
 
-	chats, _ := db.Instance.GetAllChats()
-	users, _ := db.Instance.GetAllUsers()
+	chatCounts, _ := db.Instance.GetChatCounts()
+	if chatCounts == nil {
+		chatCounts = &db.ChatCounts{}
+	}
+	userCounts, _ := db.Instance.GetUserCounts()
+	if userCounts == nil {
+		userCounts = &db.UserCounts{}
+	}
 
 	memLabel := "Ram usage"
 	memValue := stats.AppMemUsed
@@ -213,9 +219,13 @@ func statsHandler(c *td.Client, m *td.Message) error {
 	))
 
 	dbSection := detailsBlock("Database", fmt.Sprintf(
-		"<table bordered striped>%s%s</table>",
-		row("Chats", fmt.Sprintf("%d", len(chats))),
-		row("Users", fmt.Sprintf("%d", len(users))),
+		"<table bordered striped>%s%s%s%s%s%s</table>",
+		row("Chats (total)", fmt.Sprintf("%d", chatCounts.Total)),
+		row("Chats (active / invalid)", fmt.Sprintf("%d / %d", chatCounts.Active, chatCounts.Invalid)),
+		row("Users (total)", fmt.Sprintf("%d", userCounts.Total)),
+		row("Users (active)", fmt.Sprintf("%d", userCounts.Active)),
+		row("Users (blocked)", fmt.Sprintf("%d", userCounts.Blocked)),
+		row("Users (deleted)", fmt.Sprintf("%d", userCounts.Deleted)),
 	))
 
 	text := fmt.Sprintf(

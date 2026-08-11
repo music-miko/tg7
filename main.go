@@ -14,6 +14,7 @@ import (
 	"ashokshau/tgmusic/src/core/dl"
 	"ashokshau/tgmusic/src/handlers"
 	"ashokshau/tgmusic/src/vc"
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -100,6 +101,7 @@ func main() {
 
 	handlers.LoadModules(client)
 	handlers.StartDailyBackups(client)
+	dl.StartDownloadsCleanup(context.Background(), tdDir)
 	_, _ = client.SendTextMessage(config.LoggerId, "The bot has started!", nil)
 	manager.Idle()
 	client.Logger.Info("The bot is shutting down...")
