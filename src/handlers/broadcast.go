@@ -27,19 +27,31 @@ var (
 
 // isUserGoneError reports whether err indicates the target user has blocked
 // the bot (isBlocked=true) or their account no longer exists (isBlocked=false,
-// meaning deleted). Matching is done on the error text, same convention used
-// elsewhere in this codebase (see vc/userbot.go, vc/leave_all.go) since the
-// underlying td/MTProto error type doesn't expose a stable error code here.
+// meaning deleted). Matching is done on the error text (case-insensitively,
+// since TDLib's own human-readable descriptions don't have consistent
+// casing), same convention used elsewhere in this codebase (see
+// vc/userbot.go, vc/leave_all.go) since the underlying td/MTProto error type
+// doesn't expose a stable error code here.
 func isUserGoneError(err error) (isBlocked, isDeleted bool) {
 	if err == nil {
 		return false, false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(msg, "USER_IS_BLOCKED"), strings.Contains(msg, "bot was blocked by the user"):
+	case strings.Contains(msg, "user_is_blocked"), strings.Contains(msg, "bot was blocked by the user"):
 		return true, false
-	case strings.Contains(msg, "USER_IS_DELETED"), strings.Contains(msg, "USER_DEACTIVATED"), strings.Contains(msg, "user is deactivated"):
+	case strings.Contains(msg, "user_is_deleted"), strings.Contains(msg, "user_deactivated"), strings.Contains(msg, "user is deactivated"):
 		return false, true
+	// These three are TDLib's own descriptions (not MTProto error codes)
+	// seen specifically on user (DM) broadcast targets: the bot has no
+	// existing chat with the user (never started it / it was cleared),
+	// so there's no way to deliver a message. Treated as "blocked" for
+	// broadcast-skip purposes even though the account itself may be fine -
+	// what matters is that resending to this ID will keep failing.
+	case strings.Contains(msg, "chat not found"),
+		strings.Contains(msg, "have no write access to the chat"),
+		strings.Contains(msg, "can't initiate conversation with a user"):
+		return true, false
 	default:
 		return false, false
 	}
@@ -47,19 +59,21 @@ func isUserGoneError(err error) (isBlocked, isDeleted bool) {
 
 // isChatGoneError reports whether err indicates the target chat is no longer
 // reachable (bot kicked/left, chat deleted, or otherwise inaccessible).
+// Matching is case-insensitive for the same reason as isUserGoneError above.
 func isChatGoneError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(msg, "CHAT_WRITE_FORBIDDEN"),
-		strings.Contains(msg, "CHANNEL_PRIVATE"),
-		strings.Contains(msg, "USER_NOT_PARTICIPANT"),
-		strings.Contains(msg, "PEER_ID_INVALID"),
-		strings.Contains(msg, "CHAT_ID_INVALID"),
+	case strings.Contains(msg, "chat_write_forbidden"),
+		strings.Contains(msg, "channel_private"),
+		strings.Contains(msg, "user_not_participant"),
+		strings.Contains(msg, "peer_id_invalid"),
+		strings.Contains(msg, "chat_id_invalid"),
 		strings.Contains(msg, "bot was kicked"),
 		strings.Contains(msg, "chat not found"),
+		strings.Contains(msg, "have no write access to the chat"),
 		strings.Contains(msg, "group chat was deleted"):
 		return true
 	default:

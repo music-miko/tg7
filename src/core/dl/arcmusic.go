@@ -25,10 +25,12 @@ import (
 	"ashokshau/tgmusic/src/utils"
 )
 
-// arcMusic is a dedicated client for the ArcMusic API, used exclusively for
-// resolving and downloading YouTube tracks. Other platforms (Spotify, Apple
-// Music, SoundCloud, Deezer, etc.) continue to use the generic apiData client
-// configured via API_URL / API_KEY.
+// arcMusic is a dedicated client for the ArcMusic API's YouTube endpoints
+// (/youtube/v2/*). Spotify track/playlist links now also go through the
+// ArcMusic API, via its /spotify endpoints - see arcSpotify in
+// arcspotify.go. Other platforms (Apple Music, SoundCloud, Deezer,
+// JioSaavn, etc.) continue to use the generic apiData client configured via
+// API_URL / API_KEY.
 type arcMusic struct {
 	ApiUrl string
 	ApiKey string

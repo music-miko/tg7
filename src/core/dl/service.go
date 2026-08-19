@@ -36,17 +36,28 @@ type DownloaderWrapper struct {
 // NewDownloaderWrapper selects the appropriate musicService based on the query format or configuration defaults.
 func NewDownloaderWrapper(query string) *DownloaderWrapper {
 	yt := newYouTubeData(query)
+	arcSp := newArcSpotify(query)
 	api := newApiData(query)
 	direct := newDirectLink(query)
 
 	var chosen musicService
-	if yt.isValid() {
+	switch {
+	case yt.isValid():
 		chosen = yt
-	} else if api.isValid() {
+	case arcSp.isValid():
+		// Spotify track/playlist links go through ArcMusic's dedicated
+		// /spotify/playlist + /spotify/download endpoints when ARC_API_URL /
+		// ARC_API_KEY are configured (see arcspotify.go). Spotify album/
+		// artist links aren't supported by those endpoints, so arcSp.isValid
+		// only matches track/playlist and everything else falls through to
+		// the generic apiData client below, same as when ArcMusic isn't
+		// configured at all.
+		chosen = arcSp
+	case api.isValid():
 		chosen = api
-	} else if direct.isValid() {
+	case direct.isValid():
 		chosen = direct
-	} else {
+	default:
 		switch config.DefaultService {
 		case "spotify":
 			chosen = api

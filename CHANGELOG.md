@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Broadcast to users no longer treats every DM as a hard failure**
+  (`src/handlers/broadcast.go`) — `/broadcast -user` was dumping thousands
+  of entries into the error report, almost all `Chat not found`,
+  `Have no write access to the chat`, or `Bot can't initiate conversation
+  with a user`. Two causes: (1) `isChatGoneError`'s existing `"chat not
+  found"` check was case-sensitive and never matched TDLib's actual
+  `"Chat not found"` wording, and (2) `isUserGoneError` had no matcher at
+  all for these three TDLib-specific error strings, which don't carry
+  MTProto codes like `USER_IS_BLOCKED`. Both matchers now compare
+  case-insensitively, and `isUserGoneError` recognizes all three as
+  "can't reach this user" - they're now marked and skipped (excluded from
+  future broadcasts via `GetActiveUsers`) instead of piling up in the
+  error file every run.
+
+### New
+
+- **Spotify now resolves via the ArcMusic API** (`src/core/dl/arcspotify.go`)
+  — Spotify track and playlist links are resolved through ArcMusic's
+  `/spotify/playlist` and `/spotify/download` endpoints (same `ARC_API_URL` /
+  `ARC_API_KEY` already used for YouTube in `arcmusic.go`, no new config
+  needed) instead of always going through the generic `API_URL` gateway.
+  `/spotify/download` returns an already-playable CDN link directly, so this
+  path skips the AES decrypt / OGG rebuild / ffmpeg re-encode steps that the
+  generic Spotify flow (`spotify_dl.go`) needs. Spotify album/artist links
+  aren't supported by these endpoints and still fall through to the generic
+  `apiData` (`API_URL`) client, same as when `ARC_API_URL` isn't configured.
+
 ### Removed
 
 - **Direct-DB media lookup (`src/core/dl/media_db.go`)** — the bot no longer
