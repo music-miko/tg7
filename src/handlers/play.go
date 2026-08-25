@@ -498,9 +498,10 @@ func handleMultipleTracks(c *td.Client, m *td.Message, updater *td.Message, trac
 
 // emptyPlayQueryText builds the short plain-text body shown when /play,
 // /vplay, /fplay, or /fvplay is used with no song name, no link, and no
-// valid reply to latch onto. It pairs with a single native "Support Chat"
-// button (Bot API 10.3 Button Revolution - see richtext.go) instead of the
-// old table/details-block writeup and its Updates/Group/Close keyboard.
+// valid reply to latch onto. It pairs with a single native "Facing Issues?
+// Report here" button (Bot API 10.3 Button Revolution - see richtext.go)
+// instead of the old table/details-block writeup and its Updates/Group/
+// Close keyboard.
 func emptyPlayQueryText(isVideo bool) string {
 	cmd := "/play"
 	verb := "song"
@@ -510,13 +511,14 @@ func emptyPlayQueryText(isVideo bool) string {
 	}
 
 	return fmt.Sprintf(
-		"Send a %s name, a link, or reply to an audio/video message with %s.\n\nStuck? Tap Support Chat below.",
+		"Send a %s name, a link, or reply to an audio/video message with %s.",
 		verb, cmd,
 	)
 }
 
 // supportButton is a single native link button to the support chat, used
-// wherever a full Updates/Group/Close keyboard would be overkill.
+// wherever a full Updates/Group/Close keyboard would be overkill. Styled
+// primary (blue) so it reads as the message's one call-to-action.
 func supportButton() RichButton {
-	return RichButton{Text: "💬 Support Chat", Style: ButtonStyleLink, Url: config.SupportGroup}
+	return RichButton{Text: "🛠 Facing Issues? Report here", Style: ButtonStylePrimary, Url: config.SupportGroup}
 }

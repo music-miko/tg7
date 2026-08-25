@@ -24,6 +24,14 @@ func cb(text, data string) gotdbot.InlineKeyboardButton {
 	}
 }
 
+// cbStyled is cb() with an explicit button Style (Bot API 10.3's colored
+// bot buttons - default/primary/success/danger/link).
+func cbStyled(text, data string, style gotdbot.ButtonStyle) gotdbot.InlineKeyboardButton {
+	btn := cb(text, data)
+	btn.Style = style
+	return btn
+}
+
 func url(text, link string) gotdbot.InlineKeyboardButton {
 	return gotdbot.InlineKeyboardButton{
 		Text: text,
@@ -43,7 +51,7 @@ func urlPrimary(text, link string) gotdbot.InlineKeyboardButton {
 	return btn
 }
 
-var CloseBtn = cb("Close", "vcplay_close")
+var CloseBtn = cbStyled("Close", "vcplay_close", gotdbot.ButtonStyleDanger{})
 var HomeBtn = cb("Home", "help_back")
 var HelpBtn = cb("Help", "help_all")
 var UserBtn = cb("Users", "help_user")
@@ -103,7 +111,7 @@ func ControlButtons(mode string) *gotdbot.ReplyMarkupInlineKeyboard {
 	resumeBtn := cb("▷", "play_resume")
 	muteBtn := cb("🔇", "play_mute")
 	unmuteBtn := cb("🔊", "play_unmute")
-	addToPlaylistBtn := cb("➕", "play_add_to_list")
+	addToPlaylistBtn := cbStyled("➕", "play_add_to_list", gotdbot.ButtonStylePrimary{})
 
 	switch mode {
 
