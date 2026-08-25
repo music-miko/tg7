@@ -89,6 +89,9 @@ func LoadModules(c *gotdbot.Client) {
 	c.OnUpdateNewCallbackQuery(settingsCallbackHandler, callbackquery.Prefix("settings_"))
 	c.OnUpdateNewCallbackQuery(setupCallbackHandler, callbackquery.Prefix("setup_"))
 	c.OnUpdateNewCallbackQuery(autoplayCallbackHandler, callbackquery.Equal("autoplay_toggle"))
+	c.OnUpdateNewCallbackQuery(muteCallbackHandler, callbackquery.Equal("playback_mute_toggle"))
+	c.OnUpdateNewCallbackQuery(pauseCallbackHandler, callbackquery.Equal("playback_pause_toggle"))
+	c.OnUpdateNewCallbackQuery(backupDeleteCallbackHandler, callbackquery.Equal("backup_delete"))
 
 	c.OnUpdateChatMember(handleParticipant, nil)
 	c.OnUpdateNewMessage(handleVoiceChatMessage, nil)

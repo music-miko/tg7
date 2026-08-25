@@ -11,15 +11,69 @@ package handlers
 import (
 	"ashokshau/tgmusic/src/utils"
 	"fmt"
-	"html"
 	"strings"
 
-	"ashokshau/tgmusic/src/core"
 	"ashokshau/tgmusic/src/core/cache"
 	"ashokshau/tgmusic/src/core/db"
 
 	td "github.com/AshokShau/gotdbot"
 )
+
+// settingsButtons builds the native toggle button rows for the /settings
+// panel (Bot API 10.3 Button Revolution - see richtext.go). Each button
+// carries its own current-state label and is styled to reflect it, so the
+// two-button "label -> value" rows the old trailing reply_markup keyboard
+// needed collapse into one full-width button per setting.
+func settingsButtons(playModeStr, adminMode string, cmdDelete bool, language string) []RichButton {
+	playStyle := ButtonStyleDefault
+	if playModeStr == utils.Admins {
+		playStyle = ButtonStylePrimary
+	}
+
+	deleteStyle := ButtonStyleDanger
+	deleteLabel := "🗑 Command Delete: Off"
+	if cmdDelete {
+		deleteStyle = ButtonStyleSuccess
+		deleteLabel = "🗑 Command Delete: On"
+	}
+
+	adminStyle := ButtonStyleDefault
+	if adminMode == utils.Admins {
+		adminStyle = ButtonStylePrimary
+	}
+
+	langLabel := "🌐 Language: English"
+	if language != "" && language != "en" {
+		langLabel = "🌐 Language: " + language
+	}
+
+	return []RichButton{
+		{Text: fmt.Sprintf("🎚 Play Mode: %s", playModeStr), Style: playStyle, Data: "settings_play"},
+		{Text: deleteLabel, Style: deleteStyle, Data: "settings_delete"},
+		{Text: fmt.Sprintf("🛡 Admin Mode: %s", adminMode), Style: adminStyle, Data: "settings_admin"},
+		{Text: langLabel, Style: ButtonStyleDefault, Data: "settings_lang"},
+	}
+}
+
+// settingsRichMessage builds the native-button /settings panel as an
+// InputRichMessage: a heading, an instruction line, one full-width toggle
+// button per setting, and a Close button.
+func settingsRichMessage(chatTitle, playModeStr, adminMode string, cmdDelete bool, language string) *td.InputRichMessage {
+	blocks := []td.InputPageBlock{
+		td.InputPageBlockSectionHeading{Size: 3, Text: td.RichTextPlain{Text: chatTitle + " settings"}},
+		td.InputPageBlockParagraph{Text: td.RichTextPlain{Text: "Tap a button below to change this chat's current settings."}},
+	}
+
+	for _, b := range settingsButtons(playModeStr, adminMode, cmdDelete, language) {
+		blocks = append(blocks, buttonRow(b))
+	}
+	blocks = append(blocks, buttonRow(RichButton{Text: "Close", Style: ButtonStyleDanger, Data: "vcplay_close"}))
+
+	return &td.InputRichMessage{
+		DetectAutomaticBlocks: true,
+		Source:                td.RichMessageSourceBlocks{Blocks: blocks},
+	}
+}
 
 func settingsHandler(c *td.Client, m *td.Message) error {
 	if m.IsPrivate() {
@@ -65,10 +119,7 @@ func settingsHandler(c *td.Client, m *td.Message) error {
 		return nil
 	}
 
-	text := fmt.Sprintf("<u><b>%s settings</b></u>\n\nClick the buttons below to change this chat's current settings.",
-		html.EscapeString(chat.Title))
-
-	_, err = m.ReplyText(c, text, &td.SendTextMessageOpts{ReplyMarkup: core.SettingsKeyboard(playModeStr, getAdminMode, cmdDelete, language), ParseMode: td.ParseModeHTML})
+	_, err = m.ReplyRichMessage(c, settingsRichMessage(chat.Title, playModeStr, getAdminMode, cmdDelete, language), nil)
 	return err
 }
 
@@ -88,8 +139,12 @@ func settingsCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error 
 	var hasPerms bool
 	for _, admin := range admins {
 		if SenderID(admin.MemberId) == cb.SenderUserId {
+			if _, isCreator := admin.Status.(*td.ChatMemberStatusCreator); isCreator {
+				hasPerms = true
+				break
+			}
 			rights, _ := cache.GetRights(c, chatID, cb.SenderUserId, false)
-			hasPerms = (rights != nil && rights.CanManageVideoChats) || admin.Status == td.ChatMemberStatusCreator{}
+			hasPerms = rights != nil && rights.CanManageVideoChats
 			break
 		}
 	}
@@ -147,10 +202,8 @@ func settingsCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error 
 		return nil
 	}
 
-	text := fmt.Sprintf("<u><b>%s settings</b></u>\n\nClick the buttons below to change this chat's current settings.",
-		html.EscapeString(chat.Title))
-
-	_, err = cb.EditMessageText(c, text, &td.EditTextMessageOpts{ReplyMarkup: core.SettingsKeyboard(playModeStr, getAdminMode, cmdDelete, language), ParseMode: td.ParseModeHTML})
+	content := &td.InputMessageRichMessage{Message: settingsRichMessage(chat.Title, playModeStr, getAdminMode, cmdDelete, language)}
+	_, err = c.EditMessageText(chatID, content, cb.MessageId, &td.EditMessageTextOpts{})
 	if err != nil {
 		return err
 	}

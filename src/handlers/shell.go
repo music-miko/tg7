@@ -63,6 +63,11 @@ func runShellCommand(cmd string, timeout time.Duration) (string, string, int) {
 	return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), exitCode
 }
 
+// shellRunner runs one or more shell commands and reports the results back
+// as an ephemeral message (Bot API 10.3 - see richtext.go), visible only
+// to the dev who ran /sh, since shell output (paths, env-derived values,
+// stack traces, ...) shouldn't sit around readable by everyone else in
+// whatever chat the command happened to be run from.
 func shellRunner(c *td.Client, m *td.Message) error {
 	args := strings.TrimSpace(Args(m))
 	if args == "" {
@@ -70,7 +75,9 @@ func shellRunner(c *td.Client, m *td.Message) error {
 		return td.EndGroups
 	}
 
-	msg, err := m.ReplyText(c, "Running...", nil)
+	receiverUserId := m.SenderID()
+
+	msg, err := m.ReplyText(c, "Running...", &td.SendTextMessageOpts{ReceiverUserID: receiverUserId})
 	if err != nil {
 		return td.EndGroups
 	}
@@ -103,23 +110,23 @@ func shellRunner(c *td.Client, m *td.Message) error {
 	}
 
 	if len(finalOutput) <= 3500 {
-		_, _ = msg.EditText(c, finalOutput, &td.EditTextMessageOpts{ParseMode: "HTML"})
+		if err := c.EditEphemeralMessageText(m.ChatId, msg.EphemeralMessageId, receiverUserId, finalOutput, &td.EditEphemeralMessageTextOpts{ParseMode: "HTML"}); err != nil {
+			c.Logger.Warn("Failed to edit ephemeral shell output", "error", err)
+		}
 		return td.EndGroups
 	}
 
 	file := filepath.Join(config.DownloadsDir, fmt.Sprintf("%d.txt", time.Now().UnixNano()))
 	if err := os.WriteFile(file, []byte(finalOutput), 0644); err != nil {
-		_, _ = msg.EditText(c, fmt.Sprintf("Failed to write output: %v", err), nil)
+		_ = c.EditEphemeralMessageText(m.ChatId, msg.EphemeralMessageId, receiverUserId, fmt.Sprintf("Failed to write output: %v", err), nil)
 		return td.EndGroups
 	}
 	defer os.Remove(file)
 
-	_, err = msg.EditMedia(c, td.InputMessageDocument{
+	if err := c.EditEphemeralMessageMedia(m.ChatId, msg.EphemeralMessageId, receiverUserId, td.InputMessageDocument{
 		Document: &td.InputDocument{Document: td.InputFileLocal{Path: file}},
-	}, nil)
-
-	if err != nil {
-		_, _ = msg.EditText(c, "Error: "+err.Error(), nil)
+	}, nil); err != nil {
+		_ = c.EditEphemeralMessageText(m.ChatId, msg.EphemeralMessageId, receiverUserId, "Error: "+err.Error(), nil)
 		return td.EndGroups
 	}
 

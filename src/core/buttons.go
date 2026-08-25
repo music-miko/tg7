@@ -10,7 +10,6 @@ package core
 
 import (
 	"ashokshau/tgmusic/config"
-	"ashokshau/tgmusic/src/utils"
 	"fmt"
 
 	"github.com/AshokShau/gotdbot"
@@ -73,50 +72,6 @@ func SupportBtn() *gotdbot.ReplyMarkupInlineKeyboard {
 	return &gotdbot.ReplyMarkupInlineKeyboard{
 		Rows: [][]gotdbot.InlineKeyboardButton{
 			{channelBtn, groupBtn},
-		},
-	}
-}
-
-func SettingsKeyboard(playMode, adminMode string, cmdDelete bool, language string) *gotdbot.ReplyMarkupInlineKeyboard {
-	playText := "Everyone"
-	if playMode == utils.Admins {
-		playText = "Admins"
-	}
-
-	deleteText := "False"
-	if cmdDelete {
-		deleteText = "True"
-	}
-
-	adminText := "Everyone"
-	if adminMode == utils.Admins {
-		adminText = "Admins"
-	}
-
-	langText := "English"
-	if language != "en" && language != "" {
-		langText = language
-	}
-
-	return &gotdbot.ReplyMarkupInlineKeyboard{
-		Rows: [][]gotdbot.InlineKeyboardButton{
-			{
-				cb("Play Mode ➜", "settings_main"),
-				cb(playText, "settings_play"),
-			},
-			{
-				cb("Command Delete ➜", "settings_main"),
-				cb(deleteText, "settings_delete"),
-			},
-			{
-				cb("Admin Mode ➜", "settings_main"),
-				cb(adminText, "settings_admin"),
-			},
-			{
-				cb("Language ➜", "settings_main"),
-				cb(langText, "settings_lang"),
-			},
-			{CloseBtn},
 		},
 	}
 }

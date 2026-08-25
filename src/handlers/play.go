@@ -142,7 +142,7 @@ func handlePlay(c *td.Client, m *td.Message, isVideo bool, force bool) error {
 	}
 
 	if url == "" && args == "" && (!isReply || !isValidMedia(rMsg)) {
-		_, _ = replyRich(c, m, emptyPlayQueryText(isVideo), core.SupportKeyboard())
+		_, _ = replyButtonRich(c, m, "🎧 What would you like to play?", emptyPlayQueryText(isVideo), supportButton())
 		return td.EndGroups
 	}
 
@@ -496,45 +496,27 @@ func handleMultipleTracks(c *td.Client, m *td.Message, updater *td.Message, trac
 	return err
 }
 
-// emptyPlayQueryText builds the Rich HTML message shown when /play, /vplay,
-// /fplay, or /fvplay is used with no song name, no link, and no valid reply
-// to latch onto. It leans on a compact example table instead of a bullet
-// list so the three ways to queue a track (name, reply, link) read as one
-// glance-able reference rather than three separate lines, and it surfaces
-// the sibling commands (force-play, autoplay) so people who only knew
-// /play discover the rest.
+// emptyPlayQueryText builds the short plain-text body shown when /play,
+// /vplay, /fplay, or /fvplay is used with no song name, no link, and no
+// valid reply to latch onto. It pairs with a single native "Support Chat"
+// button (Bot API 10.3 Button Revolution - see richtext.go) instead of the
+// old table/details-block writeup and its Updates/Group/Close keyboard.
 func emptyPlayQueryText(isVideo bool) string {
 	cmd := "/play"
 	verb := "song"
-	sibling := "/fplay"
 	if isVideo {
 		cmd = "/vplay"
 		verb = "video"
-		sibling = "/fvplay"
 	}
 
-	examples := "<table bordered striped>" +
-		"<tr><th>What you have</th><th>What to run</th></tr>" +
-		fmt.Sprintf("<tr><td align=\"left\">A %s name</td><td align=\"left\"><code>%s shape of you</code></td></tr>", verb, cmd) +
-		fmt.Sprintf("<tr><td align=\"left\">A link</td><td align=\"left\"><code>%s https://...</code></td></tr>", cmd) +
-		fmt.Sprintf("<tr><td align=\"left\">An audio/video message</td><td align=\"left\">Reply to it with <code>%s</code></td></tr>", cmd) +
-		"</table>"
-
-	seeAlso := detailsBlock("🔎 See also", fmt.Sprintf(
-		"• <code>%s [%s]</code> — same as <code>%s</code>, but cuts straight to the front of the queue (admins only)\n"+
-			"• <code>/autoplay</code> — keeps a related track playing automatically once the queue runs dry",
-		sibling, verb, cmd,
-	))
-
 	return fmt.Sprintf(
-		"%s\n"+
-			"You ran <code>%s</code> without a %s name, a link, or a reply to latch onto. Here's how it works:\n\n"+
-			"%s\n\n"+
-			"%s\n\n"+
-			"<b>Supported platforms:</b> YouTube • Spotify • JioSaavn • Apple Music",
-		headingBlock(3, "🎧 What would you like to play?"),
-		cmd, verb,
-		examples,
-		seeAlso,
+		"Send a %s name, a link, or reply to an audio/video message with %s.\n\nStuck? Tap Support Chat below.",
+		verb, cmd,
 	)
+}
+
+// supportButton is a single native link button to the support chat, used
+// wherever a full Updates/Group/Close keyboard would be overkill.
+func supportButton() RichButton {
+	return RichButton{Text: "💬 Support Chat", Style: ButtonStyleLink, Url: config.SupportGroup}
 }

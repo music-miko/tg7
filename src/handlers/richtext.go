@@ -111,6 +111,94 @@ func dividerBlock() string {
 	return "<hr>"
 }
 
+// --- Ephemeral Messages (Bot API 10.2/10.3) --------------------------------
+//
+// Ephemeral messages are visible only to the bot and one specific chat
+// member (see https://core.telegram.org/bots/features#ephemeral-messages),
+// which makes them a good fit for dev-only output (shell command results,
+// internal diagnostics, ...) that shouldn't sit around readable by anyone
+// else in whatever chat the command was run from. A send becomes ephemeral
+// simply by setting ReceiverUserID on the usual SendTextMessageOpts - no
+// separate API. There's no documented support for swapping an ephemeral
+// message's content for a *different* Rich Message via edit, so
+// replyRichEphemeral below is send-only; callers that need to update an
+// ephemeral status message (e.g. "Running..." -> final result) should send
+// a second ephemeral message with the final content and deleteEphemeral
+// the placeholder, rather than editing it in place.
+
+// replyRichEphemeral replies to m with a rich message that only
+// receiverUserId can see.
+func replyRichEphemeral(c *td.Client, m *td.Message, receiverUserId int64, htmlText string, markup td.ReplyMarkup) (*td.Message, error) {
+	return m.ReplyRichMessage(c, richHTML(htmlText), &td.SendTextMessageOpts{
+		DisableWebPagePreview: true,
+		ReplyMarkup:           markup,
+		ReceiverUserID:        receiverUserId,
+	})
+}
+
+// deleteEphemeral deletes an ephemeral message by its ephemeral ID, e.g. to
+// clear a "Running..." placeholder once the final ephemeral result has
+// been sent.
+func deleteEphemeral(c *td.Client, chatId int64, ephemeralMessageId int32, receiverUserId int64) {
+	if ephemeralMessageId == 0 {
+		return
+	}
+	if err := c.DeleteEphemeralMessage(chatId, ephemeralMessageId, receiverUserId); err != nil {
+		c.Logger.Warn("Failed to delete ephemeral placeholder", "error", err)
+	}
+}
+
+// --- Documents in Rich Messages (Bot API 10.3) ------------------------------
+//
+// documentFromMessage extracts the *Document from a message, whether it's a
+// plain document message or a Rich Message with a document block (see
+// buttonRichMessageWithDocument in richtext.go). Any code that used to do a
+// bare `m.Content.(*td.MessageDocument)` type assertion should go through
+// this instead, since a document attached via the new Rich Message document
+// block no longer has that content type.
+func documentFromMessage(m *td.Message) *td.Document {
+	if m == nil || m.Content == nil {
+		return nil
+	}
+
+	switch content := m.Content.(type) {
+	case *td.MessageDocument:
+		return content.Document
+	case *td.MessageRichMessage:
+		if content.Message == nil {
+			return nil
+		}
+		for _, block := range content.Message.Blocks {
+			if doc, ok := block.(*td.PageBlockDocument); ok {
+				return doc.Document
+			}
+		}
+	}
+	return nil
+}
+
+// downloadDocument downloads the file behind a *Document (as returned by
+// documentFromMessage), resolving it first if it's a remote-only reference -
+// the same remote-resolution step Message.Download does internally, which
+// isn't available to us once the document has been pulled out of a Rich
+// Message block by hand.
+func downloadDocument(c *td.Client, doc *td.Document, priority int32, offset, limit int64, synchronous bool) (*td.File, error) {
+	if doc == nil || doc.Document == nil {
+		return nil, nil
+	}
+
+	f := doc.Document
+	if f.Remote != nil {
+		resolved, err := c.GetRemoteFile(f.Remote.Id, &td.GetRemoteFileOpts{})
+		if err != nil {
+			return nil, err
+		}
+		f = resolved
+	}
+
+	return f.Download(c, limit, offset, priority, &td.DownloadFileOpts{Synchronous: synchronous})
+}
+
 // --- Button Revolution (Bot API 10.3) -------------------------------------
 //
 // Bot API 10.3 (https://core.telegram.org/bots/api#richmessagebutton) lets

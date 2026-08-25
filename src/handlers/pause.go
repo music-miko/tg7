@@ -11,7 +11,6 @@ package handlers
 import (
 	"fmt"
 
-	"ashokshau/tgmusic/src/core"
 	"ashokshau/tgmusic/src/core/cache"
 	"ashokshau/tgmusic/src/vc"
 
@@ -35,7 +34,8 @@ func pauseHandler(c *td.Client, m *td.Message) error {
 		return nil
 	}
 
-	_, err := m.ReplyText(c, fmt.Sprintf("Playback has been paused by %s.", firstName(c, m)), &td.SendTextMessageOpts{ReplyMarkup: core.ControlButtons("pause")})
+	cache.ChatCache.SetPaused(chatID, true)
+	_, err := replyButtonRich(c, m, "⏯ Pause Control", pauseText(true), pauseButton(true))
 	return err
 }
 
@@ -61,6 +61,71 @@ func resumeHandler(c *td.Client, m *td.Message) error {
 		return nil
 	}
 
-	_, err := m.ReplyText(c, fmt.Sprintf("Playback has been resumed by %s.", firstName(c, m)), &td.SendTextMessageOpts{ReplyMarkup: core.ControlButtons("resume")})
+	cache.ChatCache.SetPaused(chatID, false)
+	_, err := replyButtonRich(c, m, "⏯ Pause Control", pauseText(false), pauseButton(false))
 	return err
+}
+
+// pauseCallbackHandler handles the toggle button on the /pause and /resume
+// panels (Bot API 10.3 Button Revolution - see richtext.go), mirroring the
+// pattern used by /autoplay.
+func pauseCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error {
+	if !adminModeCB(c, cb) {
+		return nil
+	}
+
+	chatID := cb.ChatId
+	if !cache.ChatCache.IsActive(chatID) {
+		_ = cb.Answer(c, 0, true, "There is no active playback in the video chat.", "")
+		return nil
+	}
+
+	paused := cache.ChatCache.GetPaused(chatID)
+	newState := !paused
+
+	var err error
+	if newState {
+		_, err = vc.Calls.Pause(chatID)
+	} else {
+		_, err = vc.Calls.Resume(chatID)
+	}
+	if err != nil {
+		_ = cb.Answer(c, 0, true, fmt.Sprintf("Failed: %s", err.Error()), "")
+		return nil
+	}
+
+	cache.ChatCache.SetPaused(chatID, newState)
+
+	if _, err := editButtonRichByID(c, cb.ChatId, cb.MessageId, "⏯ Pause Control", pauseText(newState), pauseButton(newState)); err != nil {
+		c.Logger.Warn("Failed to edit pause message", "error", err)
+	}
+
+	var status string
+	if newState {
+		status = "paused"
+	} else {
+		status = "resumed"
+	}
+	_ = cb.Answer(c, 0, false, fmt.Sprintf("Playback has been %s.", status), "")
+
+	return nil
+}
+
+// pauseText is the plain-text body shown on the pause/resume panel, below
+// the heading passed separately to buttonRichMessage.
+func pauseText(paused bool) string {
+	if paused {
+		return "Playback is currently paused. Tap below to resume it."
+	}
+	return "Playback is currently playing. Tap below to pause it."
+}
+
+// pauseButton renders the single toggle button for the pause/resume panel
+// as a native Rich Message button (Bot API 10.3 Button Revolution), styled
+// danger/success to match its current state.
+func pauseButton(paused bool) RichButton {
+	if paused {
+		return RichButton{Text: "⏸ Paused", Style: ButtonStyleDanger, Data: "playback_pause_toggle"}
+	}
+	return RichButton{Text: "▶ Playing", Style: ButtonStyleSuccess, Data: "playback_pause_toggle"}
 }

@@ -13,6 +13,7 @@ import (
 	"html"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,8 +55,9 @@ func durationUntilNextBackup(now time.Time, hourUTC int) time.Duration {
 	return next.Sub(now)
 }
 
-// runBackup performs one backup run and sends the result (zip on success,
-// an error report on failure) to destChatId.
+// runBackup performs one backup run and sends the result (a native document
+// block plus a Delete Backup button on success, an error report on failure)
+// to destChatId.
 func runBackup(c *td.Client, destChatId int64, label string) {
 	result, err := db.Instance.BackupToZip()
 	if err != nil {
@@ -65,12 +67,7 @@ func runBackup(c *td.Client, destChatId int64, label string) {
 	}
 	defer os.Remove(result.Path)
 
-	caption := backupCaption(label, result)
-
-	_, sendErr := c.SendDocument(destChatId, td.InputFileLocal{Path: result.Path}, &td.SendDocumentOpts{
-		Caption:   caption,
-		ParseMode: "HTML",
-	})
+	_, sendErr := c.SendRichMessage(destChatId, backupRichMessage(label, result), &td.SendTextMessageOpts{})
 	if sendErr != nil {
 		slog.Error("[Backup] failed to send backup zip", "error", sendErr, "chat_id", destChatId)
 		_, _ = c.SendTextMessage(destChatId, fmt.Sprintf("<b>%s:</b> backup was created but failed to upload: <code>%s</code>", label, html.EscapeString(sendErr.Error())), &td.SendTextMessageOpts{ParseMode: "HTML"})
@@ -80,24 +77,49 @@ func runBackup(c *td.Client, destChatId int64, label string) {
 	slog.Info("[Backup] completed", "documents", result.TotalDocuments(), "collections", len(result.Collections))
 }
 
-// backupCaption builds an HTML caption summarizing a backup run.
-func backupCaption(label string, result *db.BackupResult) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("<b>%s</b>\n\n", html.EscapeString(label)))
-	sb.WriteString(fmt.Sprintf("<b>Collections:</b> %d\n<b>Documents:</b> %d\n<b>Took:</b> %s\n",
+// backupRichMessage builds the backup zip as a native Rich Message document
+// block (Bot API 10.3 - "documents attached to rich messages") alongside a
+// plain-text summary and a Delete Backup button, replacing the old
+// SendDocument-with-caption pattern.
+func backupRichMessage(label string, result *db.BackupResult) *td.InputRichMessage {
+	var body strings.Builder
+	body.WriteString(fmt.Sprintf("Collections: %d\nDocuments: %d\nTook: %s",
 		len(result.Collections), result.TotalDocuments(), result.Finished.Sub(result.StartedAt).Round(time.Second)))
 
 	if result.HasErrors() {
-		sb.WriteString("\n<b>⚠️ Some collections failed:</b>\n")
+		body.WriteString("\n\n⚠️ Some collections failed:")
 		for _, coll := range result.Collections {
 			if coll.Err != nil {
-				sb.WriteString(fmt.Sprintf("- <code>%s</code>: %s\n", html.EscapeString(coll.Collection), html.EscapeString(coll.Err.Error())))
+				body.WriteString(fmt.Sprintf("\n- %s: %s", coll.Collection, coll.Err.Error()))
 			}
 		}
 	}
 
-	sb.WriteString("\nReply to this file with <code>/restore</code> to restore this data.")
-	return sb.String()
+	body.WriteString("\n\nReply to this message with /restore to restore this data.")
+
+	return buttonRichMessageWithDocument(
+		result.Path, filepath.Base(result.Path),
+		"📦 "+label, body.String(),
+		RichButton{Text: "🗑 Delete Backup", Style: ButtonStyleDanger, Data: "backup_delete"},
+	)
+}
+
+// backupDeleteCallbackHandler handles the "Delete Backup" button on a
+// backup panel (Bot API 10.3 Button Revolution - see richtext.go). Dev-only,
+// same as the commands that produce these panels.
+func backupDeleteCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error {
+	if !isDevCB(c, cb) {
+		_ = cb.Answer(c, 0, true, "Only devs can do that.", "")
+		return nil
+	}
+
+	if err := c.DeleteMessages(cb.ChatId, []int64{cb.MessageId}, &td.DeleteMessagesOpts{Revoke: true}); err != nil {
+		_ = cb.Answer(c, 0, true, fmt.Sprintf("Failed to delete: %s", err.Error()), "")
+		return nil
+	}
+
+	_ = cb.Answer(c, 0, false, "Backup deleted.", "")
+	return nil
 }
 
 // backupHandler handles /backup: an on-demand version of the daily job,
@@ -120,10 +142,7 @@ func backupHandler(c *td.Client, m *td.Message) error {
 	}
 	defer os.Remove(result.Path)
 
-	_, err = m.ReplyDocument(c, td.InputFileLocal{Path: result.Path}, &td.SendDocumentOpts{
-		Caption:   backupCaption("Manual backup", result),
-		ParseMode: "HTML",
-	})
+	_, err = m.ReplyRichMessage(c, backupRichMessage("Manual backup", result), nil)
 	if err != nil {
 		_, _ = status.EditText(c, fmt.Sprintf("Backup created but failed to upload: %s", err.Error()), nil)
 		return td.EndGroups
@@ -134,9 +153,10 @@ func backupHandler(c *td.Client, m *td.Message) error {
 }
 
 // restoreHandler handles /restore. It must be used as a reply to a .zip
-// document previously produced by /backup or the daily automatic backup.
-// It is intentionally destructive (drop + reinsert per collection) so it
-// should only ever be reachable by devs.
+// document previously produced by /backup or the daily automatic backup -
+// either a plain document message or (as of Bot API 10.3) a document
+// attached to a Rich Message. It is intentionally destructive (drop +
+// reinsert per collection) so it should only ever be reachable by devs.
 func restoreHandler(c *td.Client, m *td.Message) error {
 	if !isDev(c, m) {
 		return td.EndGroups
@@ -148,13 +168,13 @@ func restoreHandler(c *td.Client, m *td.Message) error {
 		return td.EndGroups
 	}
 
-	docMsg, ok := reply.Content.(*td.MessageDocument)
-	if !ok || docMsg.Document == nil {
+	doc := documentFromMessage(reply)
+	if doc == nil {
 		_, _ = m.ReplyText(c, "That's not a document. Reply to the backup .zip file with /restore.", nil)
 		return td.EndGroups
 	}
 
-	fileName := docMsg.Document.FileName
+	fileName := doc.FileName
 	if !strings.HasSuffix(strings.ToLower(fileName), ".zip") {
 		_, _ = m.ReplyText(c, "That file doesn't look like a backup .zip. Reply to the backup .zip file with /restore.", nil)
 		return td.EndGroups
@@ -165,7 +185,7 @@ func restoreHandler(c *td.Client, m *td.Message) error {
 		return td.EndGroups
 	}
 
-	file, err := reply.Download(c, 1, 0, 0, true)
+	file, err := downloadDocument(c, doc, 1, 0, 0, true)
 	if err != nil {
 		_, _ = status.EditText(c, fmt.Sprintf("Failed to download backup file: %s", err.Error()), nil)
 		return td.EndGroups

@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### New
+
+- **Bot API 10.3 rollout: native buttons, ephemeral dev output, and
+  documents-in-rich-messages**
+  (`src/handlers/richtext.go`, `mute.go`, `pause.go`, `settings.go`,
+  `backup.go`, `shell.go`, `devs.go`, `watcher.go`, `play.go`,
+  `src/core/cache/chat_cache.go`) — building on the `/autoplay` native-button
+  panel:
+  - `/mute`, `/unmute`, `/pause`, and `/resume` now reply with a native
+    toggle-button panel instead of trailing keyboards, mirroring `/autoplay`.
+    New `Muted`/`Paused` fields on `ChatData` back the toggle state; new
+    `playback_mute_toggle` / `playback_pause_toggle` callback handlers.
+  - `/settings` is now a single native multi-row toggle panel (one full-width
+    button per setting, styled to reflect its current value) replacing the
+    old two-button-per-row trailing keyboard. `core.SettingsKeyboard` has
+    been removed as dead code.
+  - `/backup`, the daily automatic backup, and `runBackup` now attach the zip
+    as a native Rich Message document block (Bot API 10.3's "documents
+    attached to rich messages") alongside a summary and a Delete Backup
+    button, instead of a separate `SendDocument` call. `restoreHandler` now
+    resolves the replied-to file via a new `documentFromMessage` /
+    `downloadDocument` pair in `richtext.go` so `/restore` keeps working
+    against either a plain document message or the new rich-message form.
+  - `/sh` shell output and the dev-only `/activevc` and `/as` commands now
+    reply as **ephemeral messages** (visible only to the invoking dev),
+    via new `replyRichEphemeral` / `deleteEphemeral` helpers in
+    `richtext.go`. Ephemeral messages can't be edited into a different Rich
+    Message in place, so `/as` sends a fresh ephemeral result and deletes
+    its "Inviting..." placeholder rather than editing it.
+  - The "please convert to a supergroup" notice now uses a native button row
+    (Add Me / Help / Channel / Group) instead of a trailing keyboard.
+  - The empty-query message for `/play`, `/vplay`, `/fplay`, `/fvplay` is now
+    a short two-line note with a single native Support Chat link button,
+    replacing the old table/details-block writeup and its Updates/Group/
+    Close keyboard.
+  - Not converted: `guest.go`'s inline-query result card is a photo caption,
+    and native in-message buttons only exist inside Rich Message *text*
+    content (no "rich caption" exists), so it keeps its existing keyboard.
+
 ### Fixed
 
 - **Broadcast to users no longer treats every DM as a hard failure**
@@ -38,6 +77,7 @@
   `/applemusic/search` + `/applemusic/download` and `/jiosaavn/search` +
   `/jiosaavn/download` endpoints (same `ARC_API_URL` / `ARC_API_KEY`, no new
   config) instead of always going through the generic `apiData` (`API_URL`)
+
   gateway. Both `/download` endpoints already hand back a ready-to-stream
   CDN link (Apple Music via aplmate.com resolution, JioSaavn via server-side
   DES decrypt + 320kbps upgrade), so both paths skip straight to

@@ -70,6 +70,16 @@ func isDev(c *gotdbot.Client, m *gotdbot.Message) bool {
 	return false
 }
 
+// isDevCB is isDev for a callback query instead of a message.
+func isDevCB(c *gotdbot.Client, cb *gotdbot.UpdateNewCallbackQuery) bool {
+	for _, dev := range config.DEVS {
+		if dev == cb.SenderUserId {
+			return true
+		}
+	}
+	return false
+}
+
 func SenderID(sender gotdbot.MessageSender) int64 {
 	switch s := sender.(type) {
 	case *gotdbot.MessageSenderUser:

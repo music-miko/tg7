@@ -30,13 +30,15 @@ func activeVcHandler(c *td.Client, m *td.Message) error {
 		return td.EndGroups
 	}
 
+	receiverUserId := m.SenderID()
+
 	activeChats := cache.ChatCache.GetActiveChats()
 
 	body := headingBlock(3, "🎵 Active Voice Chats")
 
 	if len(activeChats) == 0 {
 		body += "\n<blockquote><b>🔇 No active chats:</b> there are currently no active voice or video chats.</blockquote>"
-		_, err := replyRich(c, m, body, nil)
+		_, err := replyRichEphemeral(c, m, receiverUserId, body, nil)
 		return err
 	}
 
@@ -67,7 +69,7 @@ func activeVcHandler(c *td.Client, m *td.Message) error {
 	body += fmt.Sprintf("\nThere are currently <b>%d</b> active voice/video chat(s) running.\n\n", len(activeChats))
 	body += detailsBlock("📊 Click to show active chats", table.String())
 
-	_, err := replyRich(c, m, body, nil)
+	_, err := replyRichEphemeral(c, m, receiverUserId, body, nil)
 	return err
 }
 
@@ -120,14 +122,20 @@ func asHandler(c *td.Client, m *td.Message) error {
 		return td.EndGroups
 	}
 
-	reply, err := m.ReplyText(c, "Inviting all assistants into the logger group...", nil)
+	receiverUserId := m.SenderID()
+
+	placeholder, err := m.ReplyText(c, "Inviting all assistants into the logger group...", &td.SendTextMessageOpts{ReceiverUserID: receiverUserId})
 	if err != nil {
 		return err
 	}
+	// Ephemeral messages can't be edited into a different Rich Message in
+	// place (see richtext.go), so the placeholder is deleted and replaced
+	// with a fresh ephemeral message once the final result is ready.
+	defer deleteEphemeral(c, m.ChatId, placeholder.EphemeralMessageId, receiverUserId)
 
 	results := vc.Calls.JoinAllAssistants(c, config.LoggerId)
 	if len(results) == 0 {
-		_, err = reply.EditText(c, "No assistants are currently running.", nil)
+		_, err = replyRichEphemeral(c, m, receiverUserId, "No assistants are currently running.", nil)
 		return err
 	}
 
@@ -175,7 +183,7 @@ func asHandler(c *td.Client, m *td.Message) error {
 		sb.WriteString("\n</blockquote>")
 	}
 
-	_, err = editRich(c, reply, sb.String(), nil)
+	_, err = replyRichEphemeral(c, m, receiverUserId, sb.String(), nil)
 	return err
 }
 

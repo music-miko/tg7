@@ -17,6 +17,8 @@ import (
 type ChatData struct {
 	Queue            []*utils.CachedTrack
 	Autoplay         bool
+	Muted            bool
+	Paused           bool
 	LastYouTubeTrack *utils.CachedTrack
 }
 
@@ -170,6 +172,42 @@ func (c *ChatCacher) SetAutoplay(chatID int64, state bool) {
 
 	data := c.getOrCreate(chatID)
 	data.Autoplay = state
+}
+
+// GetMuted returns the mute status for a chat's playback.
+func (c *ChatCacher) GetMuted(chatID int64) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	data, ok := c.chatCache[chatID]
+	return ok && data.Muted
+}
+
+// SetMuted sets the mute status for a chat's playback.
+func (c *ChatCacher) SetMuted(chatID int64, state bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	data := c.getOrCreate(chatID)
+	data.Muted = state
+}
+
+// GetPaused returns the pause status for a chat's playback.
+func (c *ChatCacher) GetPaused(chatID int64) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	data, ok := c.chatCache[chatID]
+	return ok && data.Paused
+}
+
+// SetPaused sets the pause status for a chat's playback.
+func (c *ChatCacher) SetPaused(chatID int64, state bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	data := c.getOrCreate(chatID)
+	data.Paused = state
 }
 
 // GetLastYouTubeTrack returns the last played YouTube track for a chat.

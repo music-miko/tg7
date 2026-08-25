@@ -9,7 +9,7 @@
 package handlers
 
 import (
-	"ashokshau/tgmusic/src/core"
+	"ashokshau/tgmusic/config"
 	"ashokshau/tgmusic/src/core/cache"
 	"fmt"
 	"time"
@@ -17,21 +17,39 @@ import (
 	td "github.com/AshokShau/gotdbot"
 )
 
+// supergroupNoticeButtons builds the native button row for the "please
+// convert to a supergroup" notice (Bot API 10.3 Button Revolution - see
+// richtext.go): Add Me styled primary, Help default, Channel/Group link
+// buttons, replacing the old trailing core.AddMeMarkup reply_markup.
+func supergroupNoticeButtons(username string) []td.InputPageBlock {
+	return []td.InputPageBlock{
+		buttonRow(RichButton{Text: "➕ Add me to your group", Style: ButtonStylePrimary, Url: fmt.Sprintf("https://t.me/%s?startgroup=true", username)}),
+		buttonRow(RichButton{Text: "Help", Style: ButtonStyleDefault, Data: "help_all"}),
+		buttonRow(
+			RichButton{Text: "Updates", Style: ButtonStyleLink, Url: config.SupportChannel},
+			RichButton{Text: "Group", Style: ButtonStyleLink, Url: config.SupportGroup},
+		),
+	}
+}
+
 func handleVoiceChatMessage(c *td.Client, update *td.UpdateNewMessage) error {
 	m := update.Message
 	chatID := m.ChatId
 
 	if m.IsGroup() {
-		text := fmt.Sprintf(
-			"This chat (%d) is not a supergroup yet.\n<b>⚠️ Please convert this chat to a supergroup and add me as admin.</b>\n\nIf you don't know how to convert, use this guide:\n🔗 https://te.legra.ph/How-to-Convert-a-Group-to-a-Supergroup-01-02\n\nIf you have any questions, join our support group:",
-			chatID,
-		)
+		warning := fmt.Sprintf("This chat (%d) is not a supergroup yet.\n⚠️ Please convert this chat to a supergroup and add me as admin.", chatID)
+		guide := "If you don't know how to convert, use this guide:\n🔗 https://te.legra.ph/How-to-Convert-a-Group-to-a-Supergroup-01-02\n\nIf you have any questions, join our support group:"
 
-		_, _ = c.SendTextMessage(chatID, text, &td.SendTextMessageOpts{
-			ReplyMarkup:           core.AddMeMarkup(c.Me.Usernames.EditableUsername),
-			DisableWebPagePreview: true,
-			ParseMode:             "HTML",
-		})
+		blocks := []td.InputPageBlock{
+			td.InputPageBlockParagraph{Text: td.RichTextPlain{Text: warning}},
+			td.InputPageBlockParagraph{Text: td.RichTextPlain{Text: guide}},
+		}
+		blocks = append(blocks, supergroupNoticeButtons(c.Me.Usernames.EditableUsername)...)
+
+		_, _ = c.SendRichMessage(chatID, &td.InputRichMessage{
+			DetectAutomaticBlocks: true,
+			Source:                td.RichMessageSourceBlocks{Blocks: blocks},
+		}, &td.SendTextMessageOpts{DisableWebPagePreview: true})
 
 		time.Sleep(1 * time.Second)
 		_ = c.LeaveChat(chatID)
