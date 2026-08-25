@@ -71,15 +71,19 @@ func privateWelcomeText(name, botName string) string {
 	)
 }
 
+// groupWelcomeText builds the group-chat /start body as Rich HTML. Updates
+// and Support used to be separate buttons on the keyboard below; they're
+// now plain inline links in the text instead, so the keyboard only carries
+// the one action (Help) that's actually specific to this screen.
 // groupWelcomeText builds the group-chat /start body as Rich HTML.
 func groupWelcomeText(botName, uptime string) string {
 	escBotName := html.EscapeString(botName)
 
 	return fmt.Sprintf(
 		"%s"+
-			"<p><b>Uptime:</b> <code>%s</code></p>"+
-			"<p><i>A feature-rich music bot for your group's voice chats — play, queue, and keep the music going with autoplay.</i></p>",
-		headingBlock(3, fmt.Sprintf("%s is ready! 🎶", escBotName)),
+			"<p><b>Uptime:</b> <code>%s</code> — play, queue, and autoplay are ready.</p>"+
+			"<p>Run <code>/play song name</code> to get started.</p>",
+		headingBlock(4, fmt.Sprintf("%s is ready 🎶", escBotName)),
 		uptime,
 	)
 }

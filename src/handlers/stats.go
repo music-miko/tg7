@@ -201,32 +201,32 @@ func statsHandler(c *td.Client, m *td.Message) error {
 		return fmt.Sprintf("<tr><td align=\"left\">%s</td><td align=\"right\">%s</td></tr>", label, value)
 	}
 
-	systemSection := detailsBlock("System", fmt.Sprintf(
-		"<table bordered striped>%s%s%s</table>",
+	systemSection := fmt.Sprintf(
+		"<b>System</b>\n<table bordered striped>%s%s%s</table>",
 		row("CPU usage", fmt.Sprintf("%s (%d cores)", stats.SystemCPU, stats.CPUCores)),
 		row("Ram usage", fmt.Sprintf("%s / %s", stats.SystemMemUsed, stats.SystemMemTotal)),
 		row("Storage", fmt.Sprintf("%s / %s", stats.DiskUsed, stats.DiskTotal)),
-	))
+	)
 
-	appSection := detailsBlock("Application", fmt.Sprintf(
-		"<table bordered striped>%s%s%s%s%s%s</table>",
+	appSection := fmt.Sprintf(
+		"<b>Application</b>\n<table bordered striped>%s%s%s%s%s%s</table>",
 		row("Uptime", stats.Uptime),
 		row("Goroutines", fmt.Sprintf("%d", stats.Goroutines)),
 		row("Go Version", stats.GoVersion),
 		row("CPU usage", stats.AppCPU),
 		row(memLabel, memValue),
 		row("Heap / GC", fmt.Sprintf("%s / %d runs (%s)", stats.AppHeap, stats.GCCount, stats.GCPause)),
-	))
+	)
 
-	dbSection := detailsBlock("Database", fmt.Sprintf(
-		"<table bordered striped>%s%s%s%s%s%s</table>",
+	dbSection := fmt.Sprintf(
+		"<b>Database</b>\n<table bordered striped>%s%s%s%s%s%s</table>",
 		row("Chats (total)", fmt.Sprintf("%d", chatCounts.Total)),
 		row("Chats (active / invalid)", fmt.Sprintf("%d / %d", chatCounts.Active, chatCounts.Invalid)),
 		row("Users (total)", fmt.Sprintf("%d", userCounts.Total)),
 		row("Users (active)", fmt.Sprintf("%d", userCounts.Active)),
 		row("Users (blocked)", fmt.Sprintf("%d", userCounts.Blocked)),
 		row("Users (deleted)", fmt.Sprintf("%d", userCounts.Deleted)),
-	))
+	)
 
 	text := fmt.Sprintf(
 		"%s\n<b>Version:</b> <code>%s</code>\n\n"+

@@ -142,7 +142,7 @@ func handlePlay(c *td.Client, m *td.Message, isVideo bool, force bool) error {
 	}
 
 	if url == "" && args == "" && (!isReply || !isValidMedia(rMsg)) {
-		_, _ = replyButtonRich(c, m, "🎧 What would you like to play?", emptyPlayQueryText(isVideo), supportButton())
+		_, _ = replyButtonRichSized(c, m, "🎧 What would you like to play?", emptyPlayQueryText(isVideo), 6, supportButton())
 		return td.EndGroups
 	}
 
@@ -234,7 +234,11 @@ func handleMedia(c *td.Client, m *td.Message, updater *td.Message, dlMsg *td.Mes
 			"<u><b>Added to queue: %d</b></u>\n\n<b>Title:</b> <a href='%s'>%s</a>\n\n<b>Duration:</b> %s min\n<b>Requested by:</b> %s",
 			qLen, escURL, escName, utils.SecToMin(saveCache.Duration), escUser,
 		)
-		_, err := updater.EditText(c, queueInfo, &td.EditTextMessageOpts{ReplyMarkup: core.ControlButtons("play"), ParseMode: "HTML", DisableWebPagePreview: true})
+		_, err := updater.EditText(c, queueInfo, &td.EditTextMessageOpts{
+			ReplyMarkup:           core.QueueAddedMarkup(c.Me.Usernames.EditableUsername),
+			ParseMode:             "HTML",
+			DisableWebPagePreview: true,
+		})
 		return err
 	}
 
@@ -347,7 +351,11 @@ func handleSingleTrack(c *td.Client, m *td.Message, updater *td.Message, song ut
 			qLen, escURL, escName, utils.SecToMin(saveCache.Duration), escUser,
 		)
 
-		_, err := updater.EditText(c, queueInfo, &td.EditTextMessageOpts{ReplyMarkup: core.ControlButtons("play"), ParseMode: "HTML", DisableWebPagePreview: true})
+		_, err := updater.EditText(c, queueInfo, &td.EditTextMessageOpts{
+			ReplyMarkup:           core.QueueAddedMarkup(c.Me.Usernames.EditableUsername),
+			ParseMode:             "HTML",
+			DisableWebPagePreview: true,
+		})
 		return err
 	}
 

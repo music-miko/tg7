@@ -183,6 +183,22 @@ func AddMeMarkup(username string) *gotdbot.ReplyMarkupInlineKeyboard {
 	}
 }
 
+// QueueAddedMarkup is shown on "Added to queue" notifications instead of
+// the full playback controls (skip/pause/etc. act on the *currently
+// playing* track, which this message isn't — showing them here was
+// confusing and duplicated the Now Streaming card's own controls). Every
+// queue-add is also a high-frequency moment where non-members watching the
+// group can see the bot working, so it doubles as a quiet growth CTA.
+func QueueAddedMarkup(username string) *gotdbot.ReplyMarkupInlineKeyboard {
+	addMeBtn := urlPrimary("➕Add me", fmt.Sprintf("https://t.me/%s?startgroup=true", username))
+
+	return &gotdbot.ReplyMarkupInlineKeyboard{
+		Rows: [][]gotdbot.InlineKeyboardButton{
+			{addMeBtn, CloseBtn},
+		},
+	}
+}
+
 // SetupGuideBtn opens the step-by-step setup guide via callback.
 var SetupGuideBtn = cb("Setup Guide", "setup_guide")
 
@@ -206,12 +222,15 @@ func PrivateStartMarkup(username string) *gotdbot.ReplyMarkupInlineKeyboard {
 	}
 }
 
-// GroupWelcomeMarkup builds the keyboard shown when the bot is added to a group.
+// GroupWelcomeMarkup builds the keyboard shown when the bot is added to a
+// group. Help/Close used to sit here; swapped for Updates/Support as real
+// buttons in one row (the same simple pattern as the /autoplay and
+// /settings panels) since those are the two links people actually want
+// from this screen.
 func GroupWelcomeMarkup() *gotdbot.ReplyMarkupInlineKeyboard {
 	return &gotdbot.ReplyMarkupInlineKeyboard{
 		Rows: [][]gotdbot.InlineKeyboardButton{
-			{SetupGuideBtn},
-			{url("Support Chat", config.SupportGroup), url("Updates", config.SupportChannel)},
+			{url("Updates", config.SupportChannel), url("Support", config.SupportGroup)},
 		},
 	}
 }

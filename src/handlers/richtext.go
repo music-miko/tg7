@@ -283,18 +283,19 @@ func buttonRow(buttons ...RichButton) td.InputPageBlock {
 	return td.InputPageBlockButtonRow{Buttons: inline}
 }
 
-// buttonRichMessage builds an InputRichMessage out of a plain-text
-// section heading, a plain-text paragraph body, and a native button row -
-// the block-based counterpart to richHTML, used when the buttons need to
-// live inside the message itself rather than in a trailing reply_markup.
-// heading/body are sent as plain RichText (no HTML parsing happens on the
-// blocks path - see the "Button Revolution" note above), so callers should
-// pass plain text here, not markup built for richHTML.
-func buttonRichMessage(heading, body string, buttons ...RichButton) *td.InputRichMessage {
+// buttonRichMessageSized builds an InputRichMessage out of a plain-text
+// section heading (rendered at headingSize, 1 = largest / 6 = smallest), a
+// plain-text paragraph body, and a native button row - the block-based
+// counterpart to richHTML, used when the buttons need to live inside the
+// message itself rather than in a trailing reply_markup. heading/body are
+// sent as plain RichText (no HTML parsing happens on the blocks path - see
+// the "Button Revolution" note above), so callers should pass plain text
+// here, not markup built for richHTML.
+func buttonRichMessageSized(heading, body string, headingSize int32, buttons ...RichButton) *td.InputRichMessage {
 	blocks := make([]td.InputPageBlock, 0, 3)
 	if heading != "" {
 		blocks = append(blocks, td.InputPageBlockSectionHeading{
-			Size: 3,
+			Size: headingSize,
 			Text: td.RichTextPlain{Text: heading},
 		})
 	}
@@ -309,6 +310,12 @@ func buttonRichMessage(heading, body string, buttons ...RichButton) *td.InputRic
 	}
 }
 
+// buttonRichMessage is buttonRichMessageSized with the standard heading
+// size (3) used by the toggle-panel screens (/autoplay, /mute, /pause).
+func buttonRichMessage(heading, body string, buttons ...RichButton) *td.InputRichMessage {
+	return buttonRichMessageSized(heading, body, 3, buttons...)
+}
+
 // sendButtonRich sends a new rich message with native in-message buttons
 // (no trailing reply_markup - the buttons are already part of the content).
 func sendButtonRich(c *td.Client, chatId int64, heading, body string, buttons ...RichButton) (*td.Message, error) {
@@ -321,6 +328,13 @@ func sendButtonRich(c *td.Client, chatId int64, heading, body string, buttons ..
 // in-message buttons (no trailing reply_markup).
 func replyButtonRich(c *td.Client, m *td.Message, heading, body string, buttons ...RichButton) (*td.Message, error) {
 	return m.ReplyRichMessage(c, buttonRichMessage(heading, body, buttons...), nil)
+}
+
+// replyButtonRichSized is replyButtonRich with an explicit heading size,
+// for screens (like the /play empty-query notice) that want a smaller,
+// less shouty heading than the default toggle-panel size.
+func replyButtonRichSized(c *td.Client, m *td.Message, heading, body string, headingSize int32, buttons ...RichButton) (*td.Message, error) {
+	return m.ReplyRichMessage(c, buttonRichMessageSized(heading, body, headingSize, buttons...), nil)
 }
 
 // editButtonRichByID replaces a message's content in place with plain
