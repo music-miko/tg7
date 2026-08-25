@@ -37,6 +37,8 @@ type DownloaderWrapper struct {
 func NewDownloaderWrapper(query string) *DownloaderWrapper {
 	yt := newYouTubeData(query)
 	arcSp := newArcSpotify(query)
+	arcApple := newArcAppleMusic(query)
+	arcJio := newArcJioSaavn(query)
 	api := newApiData(query)
 	direct := newDirectLink(query)
 
@@ -53,6 +55,18 @@ func NewDownloaderWrapper(query string) *DownloaderWrapper {
 		// the generic apiData client below, same as when ArcMusic isn't
 		// configured at all.
 		chosen = arcSp
+	case arcApple.isValid():
+		// Apple Music song/album/playlist links go through ArcMusic's
+		// dedicated /applemusic/search + /applemusic/download endpoints
+		// when ARC_API_URL / ARC_API_KEY are configured (see
+		// arcapplemusic.go), same as Spotify above.
+		chosen = arcApple
+	case arcJio.isValid():
+		// JioSaavn song/album/playlist/featured links go through ArcMusic's
+		// dedicated /jiosaavn/search + /jiosaavn/download endpoints when
+		// ARC_API_URL / ARC_API_KEY are configured (see arcjiosaavn.go),
+		// same as Spotify and Apple Music above.
+		chosen = arcJio
 	case api.isValid():
 		chosen = api
 	case direct.isValid():

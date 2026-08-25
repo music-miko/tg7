@@ -31,10 +31,7 @@ func autoplayHandler(c *td.Client, m *td.Message) error {
 	}
 
 	state := cache.ChatCache.GetAutoplay(chatID)
-	text := autoplayText()
-	button := autoplayButton(state)
-
-	_, err := replyRich(c, m, text, button)
+	_, err := replyButtonRich(c, m, "🔁 Autoplay Control", autoplayText(), autoplayButton(state))
 	return err
 }
 
@@ -54,10 +51,7 @@ func autoplayCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error 
 	newState := !state
 	cache.ChatCache.SetAutoplay(chatID, newState)
 
-	text := autoplayText()
-	button := autoplayButton(newState)
-
-	if _, err := editRichByID(c, cb.ChatId, cb.MessageId, text, button); err != nil {
+	if _, err := editButtonRichByID(c, cb.ChatId, cb.MessageId, "🔁 Autoplay Control", autoplayText(), autoplayButton(newState)); err != nil {
 		c.Logger.Warn("Failed to edit autoplay message", "error", err)
 	}
 
@@ -72,30 +66,19 @@ func autoplayCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error 
 	return nil
 }
 
-// autoplayText is the body shown on the /autoplay panel.
+// autoplayText is the plain-text body shown on the /autoplay panel, below
+// the heading passed separately to buttonRichMessage.
 func autoplayText() string {
-	return headingBlock(3, "🔁 Autoplay Control") +
-		"\nWhen autoplay is on, the bot picks a related track from YouTube and keeps playing automatically once the queue runs out — no need to queue anything up manually."
+	return "When autoplay is on, the bot picks a related track from YouTube and keeps playing automatically once the queue runs out — no need to queue anything up manually."
 }
 
-// autoplayButton renders the single toggle button for the /autoplay panel,
-// reflecting the current state in its label.
-func autoplayButton(state bool) *td.ReplyMarkupInlineKeyboard {
-	text := "Autoplay: OFF | ❌"
+// autoplayButton renders the single toggle button for the /autoplay panel
+// as a native Rich Message button (Bot API 10.3 Button Revolution), styled
+// success/danger to match its current state instead of relying on emoji
+// alone, and reflecting the state in its label.
+func autoplayButton(state bool) RichButton {
 	if state {
-		text = "Autoplay: ON | ✅"
+		return RichButton{Text: "Autoplay: ON", Style: ButtonStyleSuccess, Data: "autoplay_toggle"}
 	}
-
-	return &td.ReplyMarkupInlineKeyboard{
-		Rows: [][]td.InlineKeyboardButton{
-			{
-				{
-					Text: text,
-					Type: &td.InlineKeyboardButtonTypeCallback{
-						Data: []byte("autoplay_toggle"),
-					},
-				},
-			},
-		},
-	}
+	return RichButton{Text: "Autoplay: OFF", Style: ButtonStyleDanger, Data: "autoplay_toggle"}
 }

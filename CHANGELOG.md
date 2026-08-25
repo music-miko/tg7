@@ -31,6 +31,55 @@
   aren't supported by these endpoints and still fall through to the generic
   `apiData` (`API_URL`) client, same as when `ARC_API_URL` isn't configured.
 
+- **Apple Music and JioSaavn now resolve via the ArcMusic API**
+  (`src/core/dl/arcapplemusic.go`, `src/core/dl/arcjiosaavn.go`) — same
+  pattern as the Spotify change above: song/album/playlist links for both
+  platforms are now resolved through ArcMusic's dedicated
+  `/applemusic/search` + `/applemusic/download` and `/jiosaavn/search` +
+  `/jiosaavn/download` endpoints (same `ARC_API_URL` / `ARC_API_KEY`, no new
+  config) instead of always going through the generic `apiData` (`API_URL`)
+  gateway. Both `/download` endpoints already hand back a ready-to-stream
+  CDN link (Apple Music via aplmate.com resolution, JioSaavn via server-side
+  DES decrypt + 320kbps upgrade), so both paths skip straight to
+  `processDirectDL` — no local decrypt step needed. Collection links
+  (album/playlist/featured) resolve their track listing via `/search` and
+  each track is re-resolved to a playable CDN link individually as it comes
+  up for playback, exactly like `arcSpotify.getPlaylistInfo`. Wired into
+  `NewDownloaderWrapper`'s selection order right after Spotify; anything
+  these two clients don't recognize still falls through to the generic
+  `apiData` client, same as before.
+
+- **Bot API 10.3 "Button Revolution" — native in-message buttons**
+  (`src/handlers/richtext.go`) — Rich Messages can now carry buttons as part
+  of their own content (`inputPageBlockButtonRow`, with real
+  default/primary/success/danger/link styles) instead of only ever trailing
+  the message as a separate `reply_markup` keyboard. Added `RichButton`,
+  `buttonRow`, `buttonRichMessage`, `sendButtonRich`, `replyButtonRich`, and
+  `editButtonRichByID` to build and send these. The existing HTML-based rich
+  message path (`richHTML` / `sendRich` / `editRich`, used by the bigger
+  screens like Help and the Setup Guide) is untouched — HTML has no button
+  syntax, so native in-message buttons only exist on this new block-based
+  path, and both continue to coexist. `/autoplay`'s toggle panel is the
+  first thing converted over, as a concrete example: the ON/OFF button now
+  lives natively in the message (styled success/danger to match its state)
+  instead of in a trailing keyboard. Also added `documentBlock` /
+  `buttonRichMessageWithDocument` for the other half of Bot API 10.3 -
+  attaching a document directly inside a rich message's content
+  (`inputPageBlockDocument`) - available for handlers that want to pair a
+  generated file with an explanatory blurb and action buttons in one
+  message; expandable quote blocks and compact tables were already
+  reachable through the existing HTML path (`<blockquote expandable>`,
+  `<table compact bordered striped>`) and didn't need new plumbing.
+
+  **Requires a `gotdbot` bump** (`go.mod`): the previously pinned commit
+  (June 23) predates TDLib's button-row / expandable-quote-block support,
+  which only landed upstream today (TDLib 1.8.67, gotdbot commit `b0fee9d`
+  / `63e69eb`). `go.mod` now points at
+  `v0.9.4-0.20260825024158-63e69ebc50e6`; run `go mod tidy` (network access
+  to `github.com` required) after pulling to regenerate real `go.sum`
+  hashes - the checked-in entries are placeholders and will fail `go build`
+  as-is.
+
 ### Removed
 
 - **Direct-DB media lookup (`src/core/dl/media_db.go`)** — the bot no longer
