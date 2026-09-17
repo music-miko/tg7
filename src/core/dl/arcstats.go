@@ -31,6 +31,16 @@ var (
 	arcSearchAttempts  int64
 	arcSearchFailed    int64
 
+	// arcInnerTubeFallback counts how often YouTube search/lookup fell back
+	// to InnerTube because ArcMusic was unconfigured, failed, or returned
+	// nothing. ArcMusic is the primary path for search and single-video
+	// lookup (see youtube.go); this is the search-side counterpart to
+	// arcFallbackToYtDlp above, which already tracked the download side.
+	// A climbing rate here across many queries is the signal that the
+	// ArcMusic API needs attention, same as a climbing arcFallbackToYtDlp
+	// rate does for downloads.
+	arcInnerTubeFallback int64
+
 	arcTotalResolveNs int64 // sum of successful API resolve durations, for average calc
 )
 
@@ -91,13 +101,20 @@ func recordArcFallback() {
 	atomic.AddInt64(&arcFallbackToYtDlp, 1)
 }
 
-// recordArcSearch marks an ArcMusic search attempt (used as a fallback when
-// InnerTube search fails) and whether it failed.
+// recordArcSearch marks an ArcMusic search/lookup attempt - the primary path
+// for YouTube search and single-video resolution - and whether it failed.
 func recordArcSearch(failed bool) {
 	atomic.AddInt64(&arcSearchAttempts, 1)
 	if failed {
 		atomic.AddInt64(&arcSearchFailed, 1)
 	}
+}
+
+// recordInnerTubeFallback marks that InnerTube had to be used because
+// ArcMusic was unconfigured, failed, or returned no results for a
+// search/lookup. See arcInnerTubeFallback.
+func recordInnerTubeFallback() {
+	atomic.AddInt64(&arcInnerTubeFallback, 1)
 }
 
 // ArcStatsSnapshot is a read-only view of the current Arc API statistics,
@@ -114,6 +131,11 @@ type ArcStatsSnapshot struct {
 
 	SearchAttempts int64
 	SearchFailed   int64
+
+	// InnerTubeFallback is how many search/lookup calls fell back to
+	// InnerTube because ArcMusic was unconfigured, failed, or returned
+	// nothing. See arcInnerTubeFallback.
+	InnerTubeFallback int64
 
 	AvgResolveTime time.Duration
 
@@ -199,6 +221,8 @@ func GetArcStats() ArcStatsSnapshot {
 		SearchAttempts: atomic.LoadInt64(&arcSearchAttempts),
 		SearchFailed:   atomic.LoadInt64(&arcSearchFailed),
 
+		InnerTubeFallback: atomic.LoadInt64(&arcInnerTubeFallback),
+
 		AvgResolveTime: avg,
 
 		LastSuccessAt:  arcLastSuccessAt,
@@ -220,6 +244,7 @@ func ResetArcStats() {
 	atomic.StoreInt64(&arcFallbackToYtDlp, 0)
 	atomic.StoreInt64(&arcSearchAttempts, 0)
 	atomic.StoreInt64(&arcSearchFailed, 0)
+	atomic.StoreInt64(&arcInnerTubeFallback, 0)
 	atomic.StoreInt64(&arcTotalResolveNs, 0)
 
 	arcStatsMu.Lock()

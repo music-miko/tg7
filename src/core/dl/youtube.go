@@ -76,11 +76,35 @@ func (y *youTubeData) getInfo() (utils.PlatformTracks, error) {
 	switch {
 	case playlistID != "":
 		if strings.HasPrefix(playlistID, "RD") {
+			// "RD..." is a YouTube Mix/radio playlist - the same mechanism
+			// handleAutoplay uses once the queue runs dry (see
+			// vc/helpers.go). ArcMusic has no mix/playlist endpoint today,
+			// only /youtube/v2/search and /youtube/v2/download for single
+			// tracks, so this intentionally stays on InnerTube. When a mix
+			// route is added to the API, both this and handleAutoplay
+			// should switch together.
 			return GetYouTubeMixPlaylist(ctx, playlistID)
 		}
+		// Regular (non-mix) playlists have no ArcMusic equivalent either -
+		// same reasoning as above.
 		return getYouTubePlaylist(ctx, playlistID)
 
 	case videoID != "":
+		// ArcMusic first: one search call, by URL, resolves id/title/
+		// thumbnail/duration in a single round trip. Only fall through to
+		// the InnerTube chain below if ArcMusic isn't configured or comes
+		// back empty.
+		arc := newArcMusic()
+		if arc.isConfigured() {
+			arcTracks, arcErr := arc.search(fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID), 1)
+			recordArcSearch(arcErr != nil || len(arcTracks) == 0)
+			if arcErr == nil && len(arcTracks) > 0 {
+				return utils.PlatformTracks{Results: arcTracks}, nil
+			}
+			slog.Warn("ArcMusic lookup failed or empty for video ID, falling back to InnerTube", "video_id", videoID, "error", arcErr)
+		}
+		recordInnerTubeFallback()
+
 		for _, query := range []string{videoID, y.Query} {
 			tracks, err := searchYouTube(query, 10)
 			if err != nil {
@@ -105,14 +129,6 @@ func (y *youTubeData) getInfo() (utils.PlatformTracks, error) {
 			}
 		}
 
-		// InnerTube exhausted — try ArcMusic search with limit 1
-		slog.Warn("InnerTube exhausted for video ID, falling back to ArcMusic search", "video_id", videoID)
-		arcTracks, arcErr := newArcMusic().search(fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID), 1)
-		recordArcSearch(arcErr != nil || len(arcTracks) == 0)
-		if arcErr == nil && len(arcTracks) > 0 {
-			return utils.PlatformTracks{Results: arcTracks}, nil
-		}
-
 		slog.Warn("Video ID was extracted but no matching track was found in search results", "video_id", videoID)
 		return getYouTubeVideo(ctx, videoID)
 	}
@@ -120,26 +136,34 @@ func (y *youTubeData) getInfo() (utils.PlatformTracks, error) {
 	return utils.PlatformTracks{}, errors.New("no video or playlist results were found")
 }
 
+// search resolves a free-text query to YouTube results.
+//
+// ArcMusic is the primary path (see the package doc in arcmusic.go for why):
+// it is only tried when configured, and InnerTube is the fallback whenever
+// ArcMusic is unavailable, unconfigured, or returns nothing. This mirrors
+// downloadTrack below, which has always been ArcMusic-first - search was the
+// one path still defaulting to InnerTube, which this flips.
 func (y *youTubeData) search() (utils.PlatformTracks, error) {
-	tracks, err := searchYouTube(y.Query, 5)
-	if err == nil && len(tracks) > 0 {
-		return utils.PlatformTracks{Results: tracks}, nil
+	arc := newArcMusic()
+	if arc.isConfigured() {
+		arcTracks, arcErr := arc.search(y.Query, 5)
+		recordArcSearch(arcErr != nil || len(arcTracks) == 0)
+		if arcErr == nil && len(arcTracks) > 0 {
+			return utils.PlatformTracks{Results: arcTracks}, nil
+		}
+		slog.Warn("ArcMusic search failed or empty, falling back to InnerTube", "query", y.Query, "error", arcErr)
 	}
 
-	slog.Warn("searchYouTube failed, falling back to ArcMusic search", "query", y.Query, "error", err)
-	arcTracks, arcErr := newArcMusic().search(y.Query, 3)
-	recordArcSearch(arcErr != nil || len(arcTracks) == 0)
-	if arcErr != nil {
+	tracks, err := searchYouTube(y.Query, 5)
+	if err != nil || len(tracks) == 0 {
+		recordInnerTubeFallback()
 		if err != nil {
-			return utils.PlatformTracks{}, fmt.Errorf("innertube: %w; arcmusic: %v", err, arcErr)
+			return utils.PlatformTracks{}, fmt.Errorf("arcmusic and innertube search both failed: %w", err)
 		}
-		return utils.PlatformTracks{}, arcErr
-	}
-	if len(arcTracks) == 0 {
 		return utils.PlatformTracks{}, errors.New("no video results were found")
 	}
 
-	return utils.PlatformTracks{Results: arcTracks}, nil
+	return utils.PlatformTracks{Results: tracks}, nil
 }
 
 func (y *youTubeData) getTrack() (utils.TrackInfo, error) {

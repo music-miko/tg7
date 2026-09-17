@@ -13,32 +13,28 @@ package ntgcalls
 //extern void handleLogs(ntg_log_message_struct logMessage);
 import "C"
 import (
-	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
 
 // nativeCallTimeout bounds how long Go will wait for the native ntgcalls
-// engine to complete a single async call (Stop/Calls today, others can be
-// migrated the same way). Without this, a wedged native worker thread hangs
-// the calling goroutine forever - see Future.WaitTimeout for the full
-// explanation. 15s is generous for a normal Stop/Calls round-trip (these are
-// bookkeeping operations, not network calls) while still failing fast
-// enough that a stuck assistant surfaces as a user-visible error in well
-// under a minute instead of silently hanging for hours.
+// engine to complete a single async call. Without it, a wedged native worker
+// thread blocks the caller forever.
+//
+// 15s is generous for these operations - they are engine-local bookkeeping,
+// not network round-trips - while still surfacing a stuck assistant as a
+// user-visible error in well under a minute.
+//
+// Unlike the original implementation, a timeout here no longer strands a
+// goroutine (see future.go) and no longer abandons C memory that the engine
+// may still write to. It also feeds the per-engine circuit breaker
+// (health.go), so a dead engine stops costing 15s per call almost immediately.
 const nativeCallTimeout = 15 * time.Second
 
-// ErrNativeTimeout is returned when a native call does not complete within
-// nativeCallTimeout. Its presence is a strong signal that the native engine
-// for that particular *Client has deadlocked and every further call routed
-// to it will time out the same way until the process is restarted - callers
-// should treat it as "this assistant is dead", not "retry me".
-var ErrNativeTimeout = errors.New("ntgcalls: native call timed out, engine appears unresponsive")
-
-// DefaultCallTimeout returns the timeout package-internal calls use for
-// bounding native ntgcalls calls, for callers that want to match it (e.g.
-// when calling CallsTimeout directly).
+// DefaultCallTimeout returns the timeout used to bound native calls, for
+// callers that want to match it (e.g. when calling CallsTimeout directly).
 func DefaultCallTimeout() time.Duration {
 	return nativeCallTimeout
 }
@@ -47,14 +43,18 @@ func init() {
 	C.ntg_register_logger((C.ntg_log_message_callback)(unsafe.Pointer(C.handleLogs)))
 }
 
-// waitOrTimeout waits on f for nativeCallTimeout and logs+returns
-// ErrNativeTimeout instead of the usual parsed error code if the native
-// engine never calls back in time. op/chatId are only used for the log line.
-func waitOrTimeout(f *Future, op string, chatId int64) error {
+// wait bounds f by nativeCallTimeout and keeps the engine's health record up
+// to date. op/chatId are only used for the log line.
+func (ctx *Client) wait(f *Future, op string, chatId int64) error {
 	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("%s timed out after %s for chat_id=%d - native engine unresponsive", op, nativeCallTimeout, chatId))
+		ctx.health.timeout()
+		loggerNTGCalls.Error(fmt.Sprintf(
+			"%s timed out after %s for chat_id=%d - native engine unresponsive (pending native calls: %d)",
+			op, nativeCallTimeout, chatId, PendingFutures(),
+		))
 		return ErrNativeTimeout
 	}
+	ctx.health.success()
 	return parseErrorCode(f)
 }
 
@@ -62,6 +62,55 @@ var (
 	loggerNTGCalls = NewLogger("ntgcalls", LevelInfo)
 	loggerWebRTC   = NewLogger("webrtc", LevelFatal)
 )
+
+// ---------------------------------------------------------------------------
+// Bounded callback dispatch
+// ---------------------------------------------------------------------------
+//
+// The native engine invokes Go callbacks from its own worker threads. The
+// original code answered every one with a bare `go x0(...)`, including for
+// the high-frequency callbacks: handleFrames fires per frame, and
+// handleRequestBroadcastPart fires per requested segment. At 60-70 live chats
+// that is thousands of goroutine spawns a second if those callbacks are ever
+// registered, with nothing bounding them.
+//
+// High-frequency callbacks now go through a bounded pool and are dropped when
+// it saturates. Dropping is the correct behaviour here: the engine re-requests
+// segments it does not receive, and a dropped frame notification is by
+// definition already stale. Low-frequency, semantically important callbacks
+// (stream end, connection change) still get a goroutine each.
+const callbackPoolSize = 256
+
+var (
+	callbackSem     = make(chan struct{}, callbackPoolSize)
+	droppedCallback atomic.Uint64
+)
+
+// dispatchBounded runs fn on a pooled goroutine, dropping it if the pool is
+// saturated. It never blocks the calling native thread, because blocking
+// there is what stalls the whole engine.
+func dispatchBounded(fn func()) {
+	select {
+	case callbackSem <- struct{}{}:
+		go func() {
+			defer func() { <-callbackSem }()
+			fn()
+		}()
+	default:
+		if n := droppedCallback.Add(1); n%1000 == 1 {
+			loggerNTGCalls.Warn(fmt.Sprintf(
+				"callback pool saturated (%d slots), dropped %d high-frequency callback(s) so far",
+				callbackPoolSize, n,
+			))
+		}
+	}
+}
+
+// DroppedCallbacks reports how many high-frequency callbacks have been shed
+// because the pool was saturated. Useful for /stats.
+func DroppedCallbacks() uint64 {
+	return droppedCallback.Load()
+}
 
 func NTgCalls() *Client {
 	instance := &Client{
@@ -116,8 +165,10 @@ func handleStreamEnd(_ C.uintptr_t, chatID C.int64_t, streamType C.ntg_stream_ty
 	} else {
 		goStreamType = VideoStream
 	}
+	device := parseStreamDevice(streamDevice)
 	for _, x0 := range self.streamEndCallbacks {
-		go x0(goChatID, goStreamType, parseStreamDevice(streamDevice))
+		cb := x0
+		go cb(goChatID, goStreamType, device)
 	}
 }
 
@@ -132,7 +183,8 @@ func handleUpgrade(_ C.uintptr_t, chatID C.int64_t, state C.ntg_media_state_stru
 		PresentationPaused: bool(state.presentationPaused),
 	}
 	for _, x0 := range self.upgradeCallbacks {
-		go x0(goChatID, goState)
+		cb := x0
+		go cb(goChatID, goState)
 	}
 }
 
@@ -149,13 +201,18 @@ func handleConnectionChange(_ C.uintptr_t, chatID C.int64_t, networkInfo C.ntg_n
 	}
 	goCallState.State = parseConnectionState(networkInfo.state)
 	for _, x0 := range self.connectionChangeCallbacks {
-		go x0(goChatID, goCallState)
+		cb := x0
+		go cb(goChatID, goCallState)
 	}
 }
 
 //export handleFrames
 func handleFrames(_ C.uintptr_t, chatID C.int64_t, streamMode C.ntg_stream_mode_enum, streamDevice C.ntg_stream_device_enum, frames *C.ntg_frame_struct, size C.uint64_t, ptr unsafe.Pointer) {
 	self := (*Client)(ptr)
+	if len(self.frameCallbacks) == 0 {
+		return
+	}
+
 	goChatID := int64(chatID)
 	var goStreamMode StreamMode
 	switch streamMode {
@@ -178,8 +235,10 @@ func handleFrames(_ C.uintptr_t, chatID C.int64_t, streamMode C.ntg_stream_mode_
 			},
 		}
 	}
+	device := parseStreamDevice(streamDevice)
 	for _, x0 := range self.frameCallbacks {
-		go x0(goChatID, goStreamMode, parseStreamDevice(streamDevice), rawFrames)
+		cb := x0
+		dispatchBounded(func() { cb(goChatID, goStreamMode, device, rawFrames) })
 	}
 }
 
@@ -193,7 +252,8 @@ func handleRemoteSourceChange(_ C.uintptr_t, chatID C.int64_t, remoteSource C.nt
 		Device: parseStreamDevice(remoteSource.device),
 	}
 	for _, x0 := range self.remoteSourceCallbacks {
-		go x0(goChatID, goRemoteSource)
+		cb := x0
+		dispatchBounded(func() { cb(goChatID, goRemoteSource) })
 	}
 }
 
@@ -202,7 +262,8 @@ func handleRequestBroadcastTimestamp(_ C.uintptr_t, chatID C.int64_t, ptr unsafe
 	self := (*Client)(ptr)
 	goChatID := int64(chatID)
 	for _, x0 := range self.broadcastTimestampCallbacks {
-		go x0(goChatID)
+		cb := x0
+		dispatchBounded(func() { cb(goChatID) })
 	}
 }
 
@@ -231,7 +292,8 @@ func handleRequestBroadcastPart(_ C.uintptr_t, chatID C.int64_t, segmentPartRequ
 		Quality:       goSegmentQuality,
 	}
 	for _, x0 := range self.broadcastPartCallbacks {
-		go x0(goChatID, goSegmentPartRequest)
+		cb := x0
+		dispatchBounded(func() { cb(goChatID, goSegmentPartRequest) })
 	}
 }
 
@@ -263,18 +325,37 @@ func (ctx *Client) OnRequestBroadcastPart(callback BroadcastPartCallback) {
 	ctx.broadcastPartCallbacks = append(ctx.broadcastPartCallbacks, callback)
 }
 
+// ---------------------------------------------------------------------------
+// Native calls
+// ---------------------------------------------------------------------------
+//
+// Every method below follows the same shape:
+//
+//	if err := ctx.health.begin(); err != nil { return err }   // fail fast
+//	f := CreateFuture()
+//	defer f.Release()                                          // frees C memory
+//	<out-params allocated via f.allocC, inputs via f.cString>
+//	C.ntg_xxx(..., f.ParseToC())
+//	if err := ctx.wait(f, "ntg_xxx", chatId); err != nil { ... }
+//
+// The out-parameter allocation is the important detail: these calls complete
+// asynchronously, so passing &someGoLocal means the engine writes into a
+// stack frame that has already been reused by the time it gets there.
+
 func (ctx *Client) GetState(chatId int64) (MediaState, error) {
-	f := CreateFuture()
-	var buffer C.ntg_media_state_struct
-	C.ntg_get_state(C.uintptr_t(ctx.ptr), C.int64_t(chatId), &buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_get_state timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return MediaState{}, ErrNativeTimeout
-	}
-	err := parseErrorCode(f)
-	if err != nil {
+	if err := ctx.health.begin(); err != nil {
 		return MediaState{}, err
 	}
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (*C.ntg_media_state_struct)(f.allocC(C.size_t(unsafe.Sizeof(C.ntg_media_state_struct{}))))
+	C.ntg_get_state(C.uintptr_t(ctx.ptr), C.int64_t(chatId), buffer, f.ParseToC())
+	if err := ctx.wait(f, "ntg_get_state", chatId); err != nil {
+		return MediaState{}, err
+	}
+
 	return MediaState{
 		Muted:              bool(buffer.muted),
 		VideoPaused:        bool(buffer.videoPaused),
@@ -284,18 +365,20 @@ func (ctx *Client) GetState(chatId int64) (MediaState, error) {
 }
 
 func (ctx *Client) GetConnectionMode(chatId int64) (ConnectionMode, error) {
-	f := CreateFuture()
-	var buffer C.ntg_connection_mode_enum
-	C.ntg_get_connection_mode(C.uintptr_t(ctx.ptr), C.int64_t(chatId), &buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_get_connection_mode timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return ConnectionMode(0), ErrNativeTimeout
-	}
-	err := parseErrorCode(f)
-	if err != nil {
+	if err := ctx.health.begin(); err != nil {
 		return ConnectionMode(0), err
 	}
-	switch buffer {
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (*C.ntg_connection_mode_enum)(f.allocC(C.size_t(unsafe.Sizeof(C.ntg_connection_mode_enum(0)))))
+	C.ntg_get_connection_mode(C.uintptr_t(ctx.ptr), C.int64_t(chatId), buffer, f.ParseToC())
+	if err := ctx.wait(f, "ntg_get_connection_mode", chatId); err != nil {
+		return ConnectionMode(0), err
+	}
+
+	switch *buffer {
 	case C.NTG_CONNECTION_MODE_RTC:
 		return RtcConnection, nil
 	case C.NTG_CONNECTION_MODE_STREAM:
@@ -308,50 +391,96 @@ func (ctx *Client) GetConnectionMode(chatId int64) (ConnectionMode, error) {
 }
 
 func (ctx *Client) CreateCall(chatId int64) (string, error) {
-	var buffer *C.char
-	f := CreateFuture()
-	C.ntg_create(C.uintptr_t(ctx.ptr), C.int64_t(chatId), &buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_create timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return "", ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return "", err
 	}
-	defer C.free(unsafe.Pointer(buffer))
-	return C.GoString(buffer), parseErrorCode(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (**C.char)(f.allocC(C.size_t(unsafe.Sizeof((*C.char)(nil)))))
+	C.ntg_create(C.uintptr_t(ctx.ptr), C.int64_t(chatId), buffer, f.ParseToC())
+	if err := ctx.wait(f, "ntg_create", chatId); err != nil {
+		return "", err
+	}
+
+	// The engine allocates this string; we own it from here.
+	result := C.GoString(*buffer)
+	if *buffer != nil {
+		C.free(unsafe.Pointer(*buffer))
+		*buffer = nil
+	}
+	return result, nil
 }
 
 func (ctx *Client) InitPresentation(chatId int64) (string, error) {
-	var buffer *C.char
-	f := CreateFuture()
-	C.ntg_init_presentation(C.uintptr_t(ctx.ptr), C.int64_t(chatId), &buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_init_presentation timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return "", ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return "", err
 	}
-	defer C.free(unsafe.Pointer(buffer))
-	return C.GoString(buffer), parseErrorCode(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (**C.char)(f.allocC(C.size_t(unsafe.Sizeof((*C.char)(nil)))))
+	C.ntg_init_presentation(C.uintptr_t(ctx.ptr), C.int64_t(chatId), buffer, f.ParseToC())
+	if err := ctx.wait(f, "ntg_init_presentation", chatId); err != nil {
+		return "", err
+	}
+
+	result := C.GoString(*buffer)
+	if *buffer != nil {
+		C.free(unsafe.Pointer(*buffer))
+		*buffer = nil
+	}
+	return result, nil
 }
 
 func (ctx *Client) StopPresentation(chatId int64) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
+	defer f.Release()
+
 	C.ntg_stop_presentation(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
-	return waitOrTimeout(f, "ntg_stop_presentation", chatId)
+	return ctx.wait(f, "ntg_stop_presentation", chatId)
 }
 
 func (ctx *Client) AddIncomingVideo(chatId int64, endpoint string, ssrcGroups []SsrcGroup) (uint32, error) {
-	buffer := new(C.uint32_t)
-	f := CreateFuture()
-	C.ntg_add_incoming_video(C.uintptr_t(ctx.ptr), C.int64_t(chatId), C.CString(endpoint), parseSsrcGroups(ssrcGroups), C.int(len(ssrcGroups)), buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_add_incoming_video timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return 0, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return 0, err
 	}
-	return uint32(*buffer), parseErrorCode(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (*C.uint32_t)(f.allocC(C.size_t(unsafe.Sizeof(C.uint32_t(0)))))
+	C.ntg_add_incoming_video(
+		C.uintptr_t(ctx.ptr),
+		C.int64_t(chatId),
+		f.cString(endpoint),
+		parseSsrcGroupsF(f, ssrcGroups),
+		C.int(len(ssrcGroups)),
+		buffer,
+		f.ParseToC(),
+	)
+	if err := ctx.wait(f, "ntg_add_incoming_video", chatId); err != nil {
+		return 0, err
+	}
+	return uint32(*buffer), nil
 }
 
 func (ctx *Client) RemoveIncomingVideo(chatId int64, endpoint string) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
-	C.ntg_remove_incoming_video(C.uintptr_t(ctx.ptr), C.int64_t(chatId), C.CString(endpoint), f.ParseToC())
-	return waitOrTimeout(f, "ntg_remove_incoming_video", chatId)
+	defer f.Release()
+
+	C.ntg_remove_incoming_video(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.cString(endpoint), f.ParseToC())
+	return ctx.wait(f, "ntg_remove_incoming_video", chatId)
 }
 
 //goland:noinspection GoUnusedExportedFunction
@@ -367,92 +496,153 @@ func GetProtocol() Protocol {
 }
 
 func (ctx *Client) Connect(chatId int64, params string, isPresentation bool) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
-	C.ntg_connect(C.uintptr_t(ctx.ptr), C.int64_t(chatId), C.CString(params), C.bool(isPresentation), f.ParseToC())
-	return waitOrTimeout(f, "ntg_connect", chatId)
+	defer f.Release()
+
+	C.ntg_connect(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.cString(params), C.bool(isPresentation), f.ParseToC())
+	return ctx.wait(f, "ntg_connect", chatId)
 }
 
 func (ctx *Client) SetStreamSources(chatId int64, streamMode StreamMode, desc MediaDescription) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
-	C.ntg_set_stream_sources(C.uintptr_t(ctx.ptr), C.int64_t(chatId), streamMode.ParseToC(), desc.ParseToC(), f.ParseToC())
-	return waitOrTimeout(f, "ntg_set_stream_sources", chatId)
+	defer f.Release()
+
+	C.ntg_set_stream_sources(C.uintptr_t(ctx.ptr), C.int64_t(chatId), streamMode.ParseToC(), desc.parseToC(f), f.ParseToC())
+	return ctx.wait(f, "ntg_set_stream_sources", chatId)
 }
 
 func (ctx *Client) SendExternalFrame(chatId int64, streamDevice StreamDevice, data []byte, frameData FrameData) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
-	dataC, dataSize := parseBytes(data)
+	defer f.Release()
+
+	dataC, dataSize := f.cBytes(data)
 	C.ntg_send_external_frame(C.uintptr_t(ctx.ptr), C.int64_t(chatId), streamDevice.ParseToC(), dataC, dataSize, frameData.ParseToC(), f.ParseToC())
-	return waitOrTimeout(f, "ntg_send_external_frame", chatId)
+	return ctx.wait(f, "ntg_send_external_frame", chatId)
 }
 
 func (ctx *Client) SendBroadcastTimestamp(chatId int64, timestamp int64) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
+	defer f.Release()
+
 	C.ntg_send_broadcast_timestamp(C.uintptr_t(ctx.ptr), C.int64_t(chatId), C.int64_t(timestamp), f.ParseToC())
-	return waitOrTimeout(f, "ntg_send_broadcast_timestamp", chatId)
+	return ctx.wait(f, "ntg_send_broadcast_timestamp", chatId)
 }
 
 func (ctx *Client) SendBroadcastPart(chatId int64, segmentID int64, partID int32, status MediaSegmentStatus, qualityUpdate bool, data []byte) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
-	dataC, dataSize := parseBytes(data)
+	defer f.Release()
+
+	dataC, dataSize := f.cBytes(data)
 	C.ntg_send_broadcast_part(C.uintptr_t(ctx.ptr), C.int64_t(chatId), C.int64_t(segmentID), C.int32_t(partID), status.ParseToC(), C.bool(qualityUpdate), dataC, dataSize, f.ParseToC())
-	return waitOrTimeout(f, "ntg_send_broadcast_part", chatId)
+	return ctx.wait(f, "ntg_send_broadcast_part", chatId)
 }
 
 func (ctx *Client) Pause(chatId int64) (bool, error) {
-	f := CreateFuture()
-	C.ntg_pause(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_pause timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return false, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return false, err
 	}
-	return parseBool(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	C.ntg_pause(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
+	if err := ctx.wait(f, "ntg_pause", chatId); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (ctx *Client) Resume(chatId int64) (bool, error) {
-	f := CreateFuture()
-	C.ntg_resume(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_resume timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return false, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return false, err
 	}
-	return parseBool(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	C.ntg_resume(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
+	if err := ctx.wait(f, "ntg_resume", chatId); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (ctx *Client) Mute(chatId int64) (bool, error) {
-	f := CreateFuture()
-	C.ntg_mute(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_mute timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return false, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return false, err
 	}
-	return parseBool(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	C.ntg_mute(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
+	if err := ctx.wait(f, "ntg_mute", chatId); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (ctx *Client) UnMute(chatId int64) (bool, error) {
-	f := CreateFuture()
-	C.ntg_unmute(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_unmute timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return false, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return false, err
 	}
-	return parseBool(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	C.ntg_unmute(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
+	if err := ctx.wait(f, "ntg_unmute", chatId); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (ctx *Client) Stop(chatId int64) error {
+	if err := ctx.health.begin(); err != nil {
+		return err
+	}
+
 	f := CreateFuture()
+	defer f.Release()
+
 	C.ntg_stop(C.uintptr_t(ctx.ptr), C.int64_t(chatId), f.ParseToC())
-	return waitOrTimeout(f, "ntg_stop", chatId)
+	return ctx.wait(f, "ntg_stop", chatId)
 }
 
 func (ctx *Client) Time(chatId int64, streamMode StreamMode) (uint64, error) {
-	f := CreateFuture()
-	var buffer C.int64_t
-	C.ntg_time(C.uintptr_t(ctx.ptr), C.int64_t(chatId), streamMode.ParseToC(), &buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_time timed out after %s for chat_id=%d - native engine unresponsive", nativeCallTimeout, chatId))
-		return 0, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return 0, err
 	}
-	return uint64(buffer), parseErrorCode(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (*C.int64_t)(f.allocC(C.size_t(unsafe.Sizeof(C.int64_t(0)))))
+	C.ntg_time(C.uintptr_t(ctx.ptr), C.int64_t(chatId), streamMode.ParseToC(), buffer, f.ParseToC())
+	if err := ctx.wait(f, "ntg_time", chatId); err != nil {
+		return 0, err
+	}
+	return uint64(*buffer), nil
 }
 
 //goland:noinspection GoUnusedExportedFunction
@@ -468,24 +658,34 @@ func GetMediaDevices() MediaDevices {
 }
 
 func (ctx *Client) CpuUsage() (float64, error) {
-	f := CreateFuture()
-	var buffer C.double
-	C.ntg_cpu_usage(C.uintptr_t(ctx.ptr), &buffer, f.ParseToC())
-	if !f.WaitTimeout(nativeCallTimeout) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_cpu_usage timed out after %s - native engine unresponsive", nativeCallTimeout))
-		return 0, ErrNativeTimeout
+	if err := ctx.health.begin(); err != nil {
+		return 0, err
 	}
-	return float64(buffer), parseErrorCode(f)
+
+	f := CreateFuture()
+	defer f.Release()
+
+	buffer := (*C.double)(f.allocC(C.size_t(unsafe.Sizeof(C.double(0)))))
+	C.ntg_cpu_usage(C.uintptr_t(ctx.ptr), buffer, f.ParseToC())
+	if err := ctx.wait(f, "ntg_cpu_usage", 0); err != nil {
+		return 0, err
+	}
+	return float64(*buffer), nil
 }
 
 func (ctx *Client) EnableGLibLoop(enable bool) {
 	C.ntg_enable_g_lib_loop(C.bool(enable))
 }
 
-// Calls returns the native engine's bookkeeping for all active chats. If the
-// native call does not complete within nativeCallTimeout it returns nil
-// rather than blocking forever - see CallsCtx if you need to distinguish
-// "no calls" from "the engine timed out".
+// Calls returns the native engine's bookkeeping for all active chats.
+//
+// This is an engine-wide call: it takes an internal lock and marshals every
+// active chat, so its cost grows with the number of live voice chats. It was
+// previously on the hot path of every single play (Assistant.Play called it
+// just to ask "is this one chat already connected?"), which is why
+// "ntg_calls timed out after 15s" was the first symptom to appear once ~60-70
+// chats were live. The vc layer now keeps its own per-chat activity set and
+// only falls back here when that set is not authoritative.
 func (ctx *Client) Calls() map[int64]*CallInfo {
 	m, _ := ctx.CallsTimeout(nativeCallTimeout)
 	return m
@@ -494,23 +694,48 @@ func (ctx *Client) Calls() map[int64]*CallInfo {
 // CallsTimeout is like Calls but lets the caller pick the timeout and learn
 // whether the native call actually completed.
 func (ctx *Client) CallsTimeout(d time.Duration) (map[int64]*CallInfo, error) {
-	mapReturn := make(map[int64]*CallInfo)
+	if err := ctx.health.begin(); err != nil {
+		return nil, err
+	}
+
 	f := CreateFuture()
-	var buffer *C.ntg_call_info_struct
-	var size C.int
-	C.ntg_calls(C.uintptr_t(ctx.ptr), &buffer, &size, f.ParseToC())
+	defer f.Release()
+
+	bufferPtr := (**C.ntg_call_info_struct)(f.allocC(C.size_t(unsafe.Sizeof((*C.ntg_call_info_struct)(nil)))))
+	sizePtr := (*C.int)(f.allocC(C.size_t(unsafe.Sizeof(C.int(0)))))
+
+	C.ntg_calls(C.uintptr_t(ctx.ptr), bufferPtr, sizePtr, f.ParseToC())
+
 	if !f.WaitTimeout(d) {
-		loggerNTGCalls.Error(fmt.Sprintf("ntg_calls timed out after %s - native engine unresponsive", d))
+		ctx.health.timeout()
+		loggerNTGCalls.Error(fmt.Sprintf(
+			"ntg_calls timed out after %s - native engine unresponsive (pending native calls: %d)",
+			d, PendingFutures(),
+		))
 		return nil, ErrNativeTimeout
 	}
-	for i := 0; i < int(size); i++ {
+	ctx.health.success()
+
+	if err := parseErrorCode(f); err != nil {
+		return nil, err
+	}
+
+	buffer := *bufferPtr
+	size := int(*sizePtr)
+
+	mapReturn := make(map[int64]*CallInfo, size)
+	for i := 0; i < size; i++ {
 		rawCall := *(*C.ntg_call_info_struct)(unsafe.Pointer(uintptr(unsafe.Pointer(buffer)) + uintptr(i)*unsafe.Sizeof(C.ntg_call_info_struct{})))
 		mapReturn[int64(rawCall.chatId)] = &CallInfo{
 			Playback: parseStreamStatus(rawCall.playback),
 			Capture:  parseStreamStatus(rawCall.capture),
 		}
 	}
-	defer C.free(unsafe.Pointer(buffer))
+
+	if buffer != nil {
+		C.free(unsafe.Pointer(buffer))
+		*bufferPtr = nil
+	}
 	return mapReturn, nil
 }
 

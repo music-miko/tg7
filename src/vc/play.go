@@ -111,7 +111,14 @@ func (c *TelegramCalls) playMedia(bot *td.Client, chatID int64, filePath string,
 
 	logger.Debug("Playing media in chat", "id", chatID, "path", filePath, "index", index)
 
-	mediaDesc := getMediaDescription(filePath, video, ffmpegParameters)
+	// Pass the known duration through so getMediaDescription can tell a
+	// finite streamed track from an endless live stream - see cmd.go.
+	var durationSeconds int
+	if track := cache.ChatCache.GetPlayingTrack(chatID); track != nil {
+		durationSeconds = track.Duration
+	}
+
+	mediaDesc := getMediaDescription(filePath, video, durationSeconds, ffmpegParameters)
 	if err := call.Play(context.Background(), chatID, mediaDesc); err != nil {
 		cache.ChatCache.ClearChat(chatID)
 		return err

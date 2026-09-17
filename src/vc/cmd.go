@@ -10,7 +10,11 @@ import (
 var isURLRegex = regexp.MustCompile(`^https?://`)
 
 // getMediaDescription creates a media description for ntgcalls based on the provided file path, video status, and ffmpeg parameters.
-func getMediaDescription(filePath string, isVideo bool, ffmpegParameters string) ntgcalls.MediaDescription {
+//
+// durationSeconds is the known length of the media, or 0 when unknown. It is
+// used only to tell a finite track from an endless live stream; see the
+// reconnect handling below.
+func getMediaDescription(filePath string, isVideo bool, durationSeconds int, ffmpegParameters string) ntgcalls.MediaDescription {
 	audioDescription := &ntgcalls.AudioDescription{
 		MediaSource:  ntgcalls.MediaSourceShell,
 		SampleRate:   48000,
@@ -20,18 +24,28 @@ func getMediaDescription(filePath string, isVideo bool, ffmpegParameters string)
 	quotedPath := fmt.Sprintf("\"%s\"", filePath)
 	isURL := isURLRegex.MatchString(filePath)
 
+	// A URL with no known duration is treated as a live stream; a URL with a
+	// duration is a finite track being streamed rather than downloaded (a
+	// Spotify or Terabox CDN link, say).
+	//
+	// The distinction decides "-reconnect_at_eof". That flag makes ffmpeg
+	// treat end-of-file as a dropped connection and restart the URL from the
+	// beginning. For a live stream that is exactly right. For a finite track
+	// it is fatal: ffmpeg never exits on real completion, ntgcalls never sees
+	// a clean stream end, OnStreamEnd never fires, and the track silently
+	// loops from position 0 forever instead of advancing the queue.
+	//
+	// tg7 previously dropped the flag altogether to stop that looping, which
+	// fixed finite tracks but left live streams unable to recover from a
+	// transient EOF. Gating on duration - the approach TgMusicBot-dev takes -
+	// gets both cases right.
+	isLive := isURL && durationSeconds <= 0
+
 	var audioCmd strings.Builder
 	audioCmd.WriteString("ffmpeg ")
-	if isURL {
-		// NOTE: intentionally no "-reconnect_at_eof 1" here. That flag makes
-		// ffmpeg treat a legitimate end-of-file as a dropped connection and
-		// reconnect/re-stream the URL from the start — fine for endless live
-		// streams, but for a finite track it means ffmpeg never exits on
-		// real completion, so ntgcalls never sees a clean stream end and
-		// OnStreamEnd never fires. Confirmed via logs: this is why
-		// URL-streamed tracks (e.g. Spotify CDN links played live instead
-		// of being downloaded first) silently restart from position 0
-		// forever instead of advancing to the next queued track.
+	if isLive {
+		audioCmd.WriteString("-reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 ")
+	} else if isURL {
 		audioCmd.WriteString("-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 ")
 	}
 
@@ -101,7 +115,9 @@ func getMediaDescription(filePath string, isVideo bool, ffmpegParameters string)
 	var videoCmd strings.Builder
 	videoCmd.WriteString("ffmpeg ")
 
-	if isURL {
+	if isLive {
+		videoCmd.WriteString("-reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 ")
+	} else if isURL {
 		videoCmd.WriteString("-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 ")
 	}
 

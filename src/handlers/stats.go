@@ -19,6 +19,7 @@ import (
 
 	"ashokshau/tgmusic/config"
 	"ashokshau/tgmusic/src/core/db"
+	"ashokshau/tgmusic/src/vc/ntgcalls"
 
 	td "github.com/AshokShau/gotdbot"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -30,6 +31,16 @@ type AppStats struct {
 	Uptime     string
 	Goroutines int
 	GoVersion  string
+
+	// PendingNativeCalls is how many ntgcalls operations are currently
+	// registered - in flight, plus any abandoned after a timeout and not yet
+	// reaped. On a healthy process this hovers near zero. A number that only
+	// climbs is the earliest sign a native engine has wedged, and it shows up
+	// here well before the goroutine count does.
+	PendingNativeCalls int
+	// DroppedCallbacks counts high-frequency native callbacks shed because
+	// the dispatch pool was saturated.
+	DroppedCallbacks uint64
 
 	AppMemUsed string
 	AppHeap    string
@@ -148,6 +159,9 @@ func gatherAppStats() *AppStats {
 		Goroutines: runtime.NumGoroutine(),
 		GoVersion:  runtime.Version(),
 
+		PendingNativeCalls: ntgcalls.PendingFutures(),
+		DroppedCallbacks:   ntgcalls.DroppedCallbacks(),
+
 		AppMemUsed: memUsed,
 		AppHeap:    heap,
 		GCCount:    gcCount,
@@ -212,6 +226,8 @@ func statsHandler(c *td.Client, m *td.Message) error {
 		"<b>Application</b>\n<table bordered striped>%s%s%s%s%s%s</table>",
 		row("Uptime", stats.Uptime),
 		row("Goroutines", fmt.Sprintf("%d", stats.Goroutines)),
+		row("Pending native calls", fmt.Sprintf("%d", stats.PendingNativeCalls)),
+		row("Dropped callbacks", fmt.Sprintf("%d", stats.DroppedCallbacks)),
 		row("Go Version", stats.GoVersion),
 		row("CPU usage", stats.AppCPU),
 		row(memLabel, memValue),

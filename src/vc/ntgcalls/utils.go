@@ -39,18 +39,6 @@ func parseStreamDevice(device C.ntg_stream_device_enum) StreamDevice {
 	return goDevice
 }
 
-func parseBool(futureResult *Future) (bool, error) {
-	return *futureResult.errCode == 0, parseErrorCode(futureResult)
-}
-
-func parseBytes(data []byte) (*C.uint8_t, C.int) {
-	if data != nil {
-		rawBytes := C.CBytes(data)
-		return (*C.uint8_t)(rawBytes), C.int(len(data))
-	}
-	return nil, 0
-}
-
 func parseStringVector(data unsafe.Pointer, size C.int) []string {
 	result := make([]string, size)
 	for i := 0; i < int(size); i++ {
@@ -60,32 +48,6 @@ func parseStringVector(data unsafe.Pointer, size C.int) []string {
 	}
 	defer C.free(data)
 	return result
-}
-
-func parseUint32VectorC(data []uint32) (*C.uint32_t, C.int) {
-	if len(data) > 0 {
-		cData := C.malloc(C.size_t(len(data)) * C.size_t(unsafe.Sizeof(C.uint32_t(0))))
-		if cData == nil {
-			return nil, 0
-		}
-		ssrcs := (*C.uint32_t)(cData)
-		for i, v := range data {
-			*(*C.uint32_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ssrcs)) + uintptr(i)*unsafe.Sizeof(C.uint32_t(0)))) = C.uint32_t(v)
-		}
-		return ssrcs, C.int(len(data))
-	}
-	return nil, 0
-}
-
-func parseStringVectorC(data []string) (**C.char, C.int) {
-	if len(data) > 0 {
-		rawData := make([]*C.char, len(data))
-		for i, v := range data {
-			rawData[i] = C.CString(v)
-		}
-		return &rawData[0], C.int(len(data))
-	}
-	return nil, 0
 }
 
 func parseErrorCode(futureResult *Future) error {
@@ -115,22 +77,6 @@ func parseStreamStatus(status C.ntg_stream_status_enum) StreamStatus {
 	return ActiveStream
 }
 
-func parseSsrcGroups(ssrcGroups []SsrcGroup) *C.ntg_ssrc_group_struct {
-	if len(ssrcGroups) > 0 {
-		rawGroups := make([]C.ntg_ssrc_group_struct, len(ssrcGroups))
-		for i, group := range ssrcGroups {
-			ssrcsC, sizeSsrcs := parseUint32VectorC(group.Ssrcs)
-			rawGroups[i] = C.ntg_ssrc_group_struct{
-				semantics: C.CString(group.Semantics),
-				ssrcs:     ssrcsC,
-				sizeSsrcs: sizeSsrcs,
-			}
-		}
-		return (*C.ntg_ssrc_group_struct)(unsafe.Pointer(&rawGroups[0]))
-	}
-	return nil
-}
-
 func parseDeviceInfoVector(devices unsafe.Pointer, size C.int) []DeviceInfo {
 	rawDevices := make([]DeviceInfo, size)
 	for i := 0; i < int(size); i++ {
@@ -145,3 +91,13 @@ func parseDeviceInfoVector(devices unsafe.Pointer, size C.int) []DeviceInfo {
 	defer C.free(devices)
 	return rawDevices
 }
+
+// NOTE: parseBytes, parseBool, parseSsrcGroups, parseUint32VectorC and
+// parseStringVectorC used to live here. They have been replaced by the
+// Future-owned equivalents in cmem.go.
+//
+// The originals allocated C memory (C.CString / C.CBytes / C.malloc) that
+// nothing ever freed, and returned pointers into Go slice backing arrays
+// (&rawGroups[0]) to be read by asynchronous native calls. Both are unsafe
+// once the call outlives the Go frame that started it, which is exactly the
+// case for every ntg_* call in this package.

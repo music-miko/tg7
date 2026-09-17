@@ -1,9 +1,5 @@
 package ntgcalls
 
-//#include "ntgcalls.h"
-//#include <stdlib.h>
-import "C"
-
 type AudioDescription struct {
 	MediaSource  MediaSource
 	Input        string
@@ -12,12 +8,8 @@ type AudioDescription struct {
 	KeepOpen     bool
 }
 
-func (ctx *AudioDescription) ParseToC() C.ntg_audio_description_struct {
-	var x C.ntg_audio_description_struct
-	x.mediaSource = ctx.MediaSource.ParseToC()
-	x.input = C.CString(ctx.Input)
-	x.sampleRate = C.uint32_t(ctx.SampleRate)
-	x.channelCount = C.uint8_t(ctx.ChannelCount)
-	x.keepOpen = C.bool(ctx.KeepOpen)
-	return x
-}
+// NOTE: the old exported ParseToC() on this type was removed. It called
+// C.CString(ctx.Input) and nothing ever freed the result, so every
+// SetStreamSources leaked the whole ffmpeg command line. Use parseToC(f) in
+// cmem.go instead, which ties the allocation to the Future and frees it when
+// the native call resolves.

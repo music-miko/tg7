@@ -68,6 +68,7 @@ const (
 	TwitchClip = "twitch_clip"
 	Kick       = "kick"
 	KickClip   = "kick_clip"
+	Terabox    = "terabox"
 )
 
 const (

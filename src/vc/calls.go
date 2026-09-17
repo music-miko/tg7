@@ -83,6 +83,11 @@ func (c *TelegramCalls) getClientIndex(chatID int64) (int, error) {
 }
 
 // GetGroupAssistant retrieves the assistant and its index for a given chat.
+//
+// If the assistant this chat is pinned to has a wedged native engine, we hand
+// back a healthy one instead. Without this, every chat assigned to a dead
+// engine kept issuing calls that each burned the full native timeout before
+// failing - which is how one stuck engine turned into a process-wide backlog.
 func (c *TelegramCalls) GetGroupAssistant(chatID int64) (*Assistant, int, error) {
 	clientIndex, err := c.getClientIndex(chatID)
 	if err != nil {
@@ -96,6 +101,24 @@ func (c *TelegramCalls) GetGroupAssistant(chatID int64) (*Assistant, int, error)
 	if !ok {
 		return nil, -1, fmt.Errorf("no ntgcalls instance was found for client index %d", clientIndex)
 	}
+
+	if call.Healthy() {
+		return call, clientIndex, nil
+	}
+
+	for idx, candidate := range c.assistants {
+		if idx == clientIndex || !candidate.Healthy() {
+			continue
+		}
+		slog.Warn("[GetGroupAssistant] assigned assistant is unresponsive, routing to a healthy one",
+			"chat_id", chatID, "from_index", clientIndex, "to_index", idx)
+		return candidate, idx, nil
+	}
+
+	// Every engine is unhealthy. Return the assigned one anyway so the caller
+	// still gets a real, fast error rather than a nil dereference.
+	slog.Error("[GetGroupAssistant] all assistants report an unresponsive native engine",
+		"chat_id", chatID, "index", clientIndex)
 	return call, clientIndex, nil
 }
 
@@ -154,6 +177,10 @@ func (c *TelegramCalls) Stop(chatId int64, banned bool) error {
 	c.cancelPrefetch(chatId)
 	cache.ChatCache.SetAutoplay(chatId, false)
 	cache.ChatCache.ClearChat(chatId)
+	// Forget the chat locally regardless of how the native stop goes: leaving
+	// a stale "active" entry behind would make the next play try to retarget
+	// a call the engine no longer has.
+	call.markCallInactive(chatId)
 	err = call.stopCall(chatId, banned)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -275,6 +302,15 @@ func (c *TelegramCalls) RegisterHandlers(client *td.Client) {
 			if streamType == ntgcalls.VideoStream {
 				return
 			}
+
+			// One advance per chat at a time. A chat whose stream keeps
+			// ending early would otherwise spawn a PlayNext per event, all
+			// racing on the same queue. See playnext_guard.go.
+			if !chatAdvanceGuard.tryStart(chatID) {
+				logger.Debug("[OnStreamEnd] advance already in flight, skipping", "chat_id", chatID)
+				return
+			}
+			defer chatAdvanceGuard.finish(chatID)
 
 			if err := c.PlayNext(client, chatID); err != nil {
 				call.App.Logger.Warnf("[OnStreamEnd] Failed to play the song: %v", err)

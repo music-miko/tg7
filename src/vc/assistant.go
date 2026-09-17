@@ -32,6 +32,12 @@ type Assistant struct {
 	pendingConnections map[int64]*pendingConnection
 	waitConnect        map[int64]chan error
 
+	// activeCalls is this assistant's own view of which chats it is
+	// currently streaming to. It exists so Play does not have to ask the
+	// native engine (ntg_calls) on every single play - see active_calls.go
+	// for why that call was the first thing to time out under load.
+	activeCalls map[int64]struct{}
+
 	streamEndCallbacks []ntgcalls.StreamEndCallback
 }
 
@@ -42,6 +48,7 @@ func newAssistant(app *tg.Client) (*Assistant, error) {
 		inputGroupCalls:    make(map[int64]tg.InputGroupCall),
 		pendingConnections: make(map[int64]*pendingConnection),
 		waitConnect:        make(map[int64]chan error),
+		activeCalls:        make(map[int64]struct{}),
 	}
 	if app.IsConnected() {
 		self, err := app.GetMe()
@@ -51,6 +58,7 @@ func newAssistant(app *tg.Client) (*Assistant, error) {
 		a.self = self
 	}
 	a.handleUpdates()
+	a.startActiveCallSync()
 	return a, nil
 }
 
@@ -62,13 +70,32 @@ func (a *Assistant) Close() {
 	a.binding.Free()
 }
 
+// Play starts or retargets playback for chatId.
+//
+// The "already connected?" check is answered from this assistant's local
+// activeCalls set rather than from ntg_calls, which is an engine-wide call
+// whose cost grows with the number of live chats. If the local view turns out
+// to be stale the engine says so ("not found"), and we fall through to a full
+// connect - see active_calls.go.
 func (a *Assistant) Play(ctx context.Context, chatId int64, mediaDescription ntgcalls.MediaDescription) error {
-	if a.binding.Calls()[chatId] != nil {
-		return a.binding.SetStreamSources(chatId, ntgcalls.CaptureStream, mediaDescription)
+	if a.isCallActive(chatId) {
+		err := a.binding.SetStreamSources(chatId, ntgcalls.CaptureStream, mediaDescription)
+		if err == nil {
+			return nil
+		}
+		if !isCallNotFound(err) {
+			return err
+		}
+		// Our bookkeeping disagrees with the engine. Trust the engine.
+		logger.Info("[Play] local active-call entry was stale, reconnecting", "chat_id", chatId)
+		a.markCallInactive(chatId)
 	}
+
 	if err := a.connectCall(ctx, chatId, mediaDescription, ""); err != nil {
 		return err
 	}
+	a.markCallActive(chatId)
+
 	if chatId < 0 {
 		return a.joinPresentation(ctx, chatId, mediaDescription.Screen != nil)
 	}
@@ -79,6 +106,7 @@ func (a *Assistant) stopCall(chatId int64, banned bool) error {
 	a.mu.Lock()
 	a.presentations = stdRemove(a.presentations, chatId)
 	delete(a.pendingConnections, chatId)
+	delete(a.activeCalls, chatId)
 	inputGroupCall := a.inputGroupCalls[chatId]
 	a.mu.Unlock()
 
@@ -432,9 +460,13 @@ func (a *Assistant) handleUpdates() {
 	a.binding.OnConnectionChange(a.onConnectionChange)
 	a.binding.OnUpgrade(a.onUpgrade)
 
+	// The binding already dispatches each registered callback on its own
+	// goroutine (see ntgcalls.handleStreamEnd), so this wrapper must not add
+	// a second `go` hop - that doubled the goroutines spawned per stream-end
+	// event for no benefit.
 	a.binding.OnStreamEnd(func(chatId int64, streamType ntgcalls.StreamType, streamDevice ntgcalls.StreamDevice) {
 		for _, callback := range a.streamEndCallbacks {
-			go callback(chatId, streamType, streamDevice)
+			callback(chatId, streamType, streamDevice)
 		}
 	})
 }

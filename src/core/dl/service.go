@@ -40,6 +40,7 @@ func NewDownloaderWrapper(query string) *DownloaderWrapper {
 	arcApple := newArcAppleMusic(query)
 	arcJio := newArcJioSaavn(query)
 	api := newApiData(query)
+	tera := newTerabox(query)
 	direct := newDirectLink(query)
 
 	var chosen musicService
@@ -67,6 +68,16 @@ func NewDownloaderWrapper(query string) *DownloaderWrapper {
 		// ARC_API_URL / ARC_API_KEY are configured (see arcjiosaavn.go),
 		// same as Spotify and Apple Music above.
 		chosen = arcJio
+	case tera.isValid():
+		// Terabox share links resolve through ArcMusic's /terabox/download
+		// endpoint (same ARC_API_URL / ARC_API_KEY as the other arc*
+		// services) into a directly streamable CDN URL - see terabox.go.
+		//
+		// This must be tested before direct.isValid(), which matches any
+		// http(s) URL at all and would otherwise swallow Terabox links and
+		// hand them to ffprobe, where they resolve to an HTML share page
+		// rather than media.
+		chosen = tera
 	case api.isValid():
 		chosen = api
 	case direct.isValid():

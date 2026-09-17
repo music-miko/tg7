@@ -62,9 +62,10 @@ func ytStatsHandler(c *td.Client, m *td.Message) error {
 	sb.WriteString(fmt.Sprintf("<b>Avg resolve time:</b> <code>%s</code>\n\n", stats.AvgResolveTime.Round(10*time.Millisecond)))
 
 	sb.WriteString(fmt.Sprintf(
-		"<b>Search fallback:</b> <code>%d</code> attempts, <code>%d</code> failed (%.1f%% success)\n\n",
+		"<b>ArcMusic search/lookup:</b> <code>%d</code> attempts, <code>%d</code> failed (%.1f%% success)\n",
 		stats.SearchAttempts, stats.SearchFailed, stats.SearchSuccessRate(),
 	))
+	sb.WriteString(fmt.Sprintf("<b>Fell back to InnerTube:</b> <code>%d</code>\n\n", stats.InnerTubeFallback))
 
 	sb.WriteString(fmt.Sprintf("<b>Last success:</b> %s\n", tgTime(stats.LastSuccessAt)))
 	sb.WriteString(fmt.Sprintf("<b>Last failure:</b> %s\n", tgTime(stats.LastFailureAt)))
