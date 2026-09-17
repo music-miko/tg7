@@ -9,6 +9,21 @@ import (
 
 var isURLRegex = regexp.MustCompile(`^https?://`)
 
+// isHLSURL reports whether filePath points at an HLS manifest (.m3u8),
+// ignoring any query string - CDN proxies commonly serve these behind a
+// signed-token query (e.g. "...playlist.m3u8?token=...").
+//
+// This matters because HLS has its own, correct notion of "is this stream
+// finite or live" baked into the manifest itself (the presence or absence of
+// #EXT-X-ENDLIST) which ffmpeg's hls demuxer already honours. Our outer
+// -reconnect_at_eof flag has no business overriding that - see isLive below.
+func isHLSURL(filePath string) bool {
+	if i := strings.IndexByte(filePath, '?'); i >= 0 {
+		filePath = filePath[:i]
+	}
+	return strings.HasSuffix(strings.ToLower(filePath), ".m3u8")
+}
+
 // getMediaDescription creates a media description for ntgcalls based on the provided file path, video status, and ffmpeg parameters.
 //
 // durationSeconds is the known length of the media, or 0 when unknown. It is
@@ -38,8 +53,24 @@ func getMediaDescription(filePath string, isVideo bool, durationSeconds int, ffm
 	// tg7 previously dropped the flag altogether to stop that looping, which
 	// fixed finite tracks but left live streams unable to recover from a
 	// transient EOF. Gating on duration - the approach TgMusicBot-dev takes -
-	// gets both cases right.
-	isLive := isURL && durationSeconds <= 0
+	// gets both cases right IF the duration is known. It isn't always: e.g.
+	// Terabox's API doesn't return a per-file duration at all, so every
+	// Terabox track looks like "duration unknown" here even though it is
+	// finite content.
+	//
+	// HLS (.m3u8) is carved out unconditionally, independent of duration,
+	// because it has its own correct live/VOD signal that -reconnect_at_eof
+	// has no business overriding - see isHLSURL. This is also what actually
+	// matters in practice: applying -reconnect_at_eof to an HLS input makes
+	// ffmpeg treat the manifest's (and each segment's) legitimate EOF as a
+	// dropped connection and loop trying to reconnect instead of ever
+	// producing frames - so playback silently never starts. No ffmpeg error,
+	// no ntgcalls error, it just sits there. A Terabox track streamed via a
+	// .m3u8 CDN link hits this exactly: duration unknown (see above) plus
+	// HLS is the one combination where the duration-only heuristic gets it
+	// wrong in the most damaging way, so it gets its own explicit check
+	// rather than relying on the CDN source to ever report a duration.
+	isLive := isURL && !isHLSURL(filePath) && durationSeconds <= 0
 
 	var audioCmd strings.Builder
 	audioCmd.WriteString("ffmpeg ")
