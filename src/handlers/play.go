@@ -235,7 +235,7 @@ func handleMedia(c *td.Client, m *td.Message, updater *td.Message, dlMsg *td.Mes
 			qLen, escURL, escName, utils.SecToMin(saveCache.Duration), escUser,
 		)
 		_, err := updater.EditText(c, queueInfo, &td.EditTextMessageOpts{
-			ReplyMarkup:           core.QueueAddedMarkup(c.Me.Usernames.EditableUsername),
+			ReplyMarkup:           core.QueueAddedMarkup(),
 			ParseMode:             "HTML",
 			DisableWebPagePreview: true,
 		})
@@ -352,7 +352,7 @@ func handleSingleTrack(c *td.Client, m *td.Message, updater *td.Message, song ut
 		)
 
 		_, err := updater.EditText(c, queueInfo, &td.EditTextMessageOpts{
-			ReplyMarkup:           core.QueueAddedMarkup(c.Me.Usernames.EditableUsername),
+			ReplyMarkup:           core.QueueAddedMarkup(),
 			ParseMode:             "HTML",
 			DisableWebPagePreview: true,
 		})

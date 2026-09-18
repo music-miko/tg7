@@ -186,15 +186,17 @@ func AddMeMarkup(username string) *gotdbot.ReplyMarkupInlineKeyboard {
 // QueueAddedMarkup is shown on "Added to queue" notifications instead of
 // the full playback controls (skip/pause/etc. act on the *currently
 // playing* track, which this message isn't — showing them here was
-// confusing and duplicated the Now Streaming card's own controls). Every
-// queue-add is also a high-frequency moment where non-members watching the
-// group can see the bot working, so it doubles as a quiet growth CTA.
-func QueueAddedMarkup(username string) *gotdbot.ReplyMarkupInlineKeyboard {
-	addMeBtn := urlPrimary("➕Add me", fmt.Sprintf("https://t.me/%s?startgroup=true", username))
+// confusing and duplicated the Now Streaming card's own controls). It
+// keeps the same "Add track to playlist" action used on the Now Streaming
+// card (see ControlButtons's addToPlaylistBtn) instead of a group-growth
+// "Add me" CTA, so a queue notification behaves like a normal playback
+// message rather than an ad.
+func QueueAddedMarkup() *gotdbot.ReplyMarkupInlineKeyboard {
+	addToPlaylistBtn := cbStyled("➕", "play_add_to_list", gotdbot.ButtonStylePrimary{})
 
 	return &gotdbot.ReplyMarkupInlineKeyboard{
 		Rows: [][]gotdbot.InlineKeyboardButton{
-			{addMeBtn, CloseBtn},
+			{addToPlaylistBtn, CloseBtn},
 		},
 	}
 }

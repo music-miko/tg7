@@ -171,6 +171,14 @@ func (a *Assistant) connectCall(ctx context.Context, chatId int64, mediaDescript
 			},
 		)
 		if err != nil {
+			// The native call session was already created (CreateCall above)
+			// even though joining on Telegram's side failed - e.g.
+			// INTERDC_X_CALL_ERROR / INTERDC_X_CALL_RICH_ERROR from a DC
+			// hiccup. Without tearing it down here, the next attempt's
+			// CreateCall(chatId) fails with "Connection cannot be
+			// initialized more than once" because ntgcalls still thinks
+			// this chat has a live session.
+			_ = a.binding.Stop(chatId)
 			return err
 		}
 
@@ -186,11 +194,13 @@ func (a *Assistant) connectCall(ctx context.Context, chatId int64, mediaDescript
 			resultParams,
 			false,
 		); err != nil {
+			_ = a.binding.Stop(chatId)
 			return err
 		}
 
 		connectionMode, err := a.binding.GetConnectionMode(chatId)
 		if err != nil {
+			_ = a.binding.Stop(chatId)
 			return err
 		}
 
@@ -208,10 +218,15 @@ func (a *Assistant) connectCall(ctx context.Context, chatId int64, mediaDescript
 
 	select {
 	case err := <-connectCh:
+		if err != nil {
+			_ = a.binding.Stop(chatId)
+		}
 		return err
 	case <-ctx.Done():
+		_ = a.binding.Stop(chatId)
 		return ctx.Err()
 	case <-time.After(connectWaitTimeout):
+		_ = a.binding.Stop(chatId)
 		return fmt.Errorf("connection timeout")
 	}
 }
