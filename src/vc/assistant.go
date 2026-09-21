@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,14 @@ type Assistant struct {
 	pendingConnections map[int64]*pendingConnection
 	waitConnect        map[int64]chan error
 
+	// active holds the chats whose call was fully set up (joined on Telegram's
+	// side AND connected natively). A native ntgcalls entry that is not in this
+	// set is a half-initialised leftover from a failed join.
+	active map[int64]bool
+	// chatLocks serialises Play() per chat so two concurrent plays can't both
+	// try to create the same native call.
+	chatLocks sync.Map
+
 	streamEndCallbacks []ntgcalls.StreamEndCallback
 }
 
@@ -42,6 +51,7 @@ func newAssistant(app *tg.Client) (*Assistant, error) {
 		inputGroupCalls:    make(map[int64]tg.InputGroupCall),
 		pendingConnections: make(map[int64]*pendingConnection),
 		waitConnect:        make(map[int64]chan error),
+		active:             make(map[int64]bool),
 	}
 	if app.IsConnected() {
 		self, err := app.GetMe()
@@ -63,7 +73,10 @@ func (a *Assistant) Close() {
 }
 
 func (a *Assistant) Play(ctx context.Context, chatId int64, mediaDescription ntgcalls.MediaDescription) error {
-	if a.binding.Calls()[chatId] != nil {
+	unlock := a.lockChat(chatId)
+	defer unlock()
+
+	if a.isLive(chatId) {
 		return a.binding.SetStreamSources(chatId, ntgcalls.CaptureStream, mediaDescription)
 	}
 	if err := a.connectCall(ctx, chatId, mediaDescription, ""); err != nil {
@@ -75,10 +88,72 @@ func (a *Assistant) Play(ctx context.Context, chatId int64, mediaDescription ntg
 	return nil
 }
 
+// lockChat serialises call setup for a single chat and returns the unlock func.
+func (a *Assistant) lockChat(chatId int64) func() {
+	m, _ := a.chatLocks.LoadOrStore(chatId, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// isLive reports whether chatId has a fully established call that we can just
+// re-point at a new media source. Merely existing inside the native engine is
+// not enough: a failed join leaves a native entry behind, and treating that as
+// a live call is what made retries misbehave.
+func (a *Assistant) isLive(chatId int64) bool {
+	a.mu.RLock()
+	active := a.active[chatId]
+	a.mu.RUnlock()
+	if !active {
+		return false
+	}
+
+	calls, err := a.binding.CallsTimeout(ntgcalls.DefaultCallTimeout())
+	if err != nil {
+		// Can't ask the engine; trust our own bookkeeping.
+		return true
+	}
+	if calls[chatId] == nil {
+		a.mu.Lock()
+		delete(a.active, chatId)
+		a.mu.Unlock()
+		return false
+	}
+	return true
+}
+
+// discardCall tears down whatever native/bookkeeping state exists for chatId so
+// the next attempt starts from scratch.
+func (a *Assistant) discardCall(chatId int64) {
+	a.mu.Lock()
+	delete(a.active, chatId)
+	delete(a.pendingConnections, chatId)
+	a.mu.Unlock()
+
+	if err := a.binding.Stop(chatId); err != nil && !strings.Contains(err.Error(), "not found") {
+		a.App.Log.Warnf("failed to discard call for chat %d: %v", chatId, err)
+	}
+}
+
+// isTransientJoinError matches Telegram's inter-DC hiccups (code 500), e.g.
+// INTERDC_X_CALL_ERROR / INTERDC_X_CALL_RICH_ERROR, which usually succeed on retry.
+func isTransientJoinError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "INTERDC_") || strings.Contains(msg, "(code 500)")
+}
+
+// isAlreadyExistsError matches ntgcalls' "one connection per chat" guard.
+func isAlreadyExistsError(err error) bool {
+	return strings.Contains(err.Error(), "cannot be initialized more than once")
+}
+
+const joinAttempts = 3
+
 func (a *Assistant) stopCall(chatId int64, banned bool) error {
 	a.mu.Lock()
 	a.presentations = stdRemove(a.presentations, chatId)
 	delete(a.pendingConnections, chatId)
+	delete(a.active, chatId)
 	inputGroupCall := a.inputGroupCalls[chatId]
 	a.mu.Unlock()
 
@@ -105,51 +180,89 @@ func (a *Assistant) connectCall(ctx context.Context, chatId int64, mediaDescript
 		a.mu.Unlock()
 	}()
 
+	// Only a fresh join (not the pending-stream reconnect) owns the native call
+	// it creates, so only then may we tear it down on failure.
+	fresh := jsonParams == ""
+	created := false
+	joinedOnTelegram := false
+	success := false
+	var inputGroupCall tg.InputGroupCall
+
+	defer func() {
+		if success || !created {
+			return
+		}
+		// CreateCall succeeded but something after it failed. Without this the
+		// native connection stays registered and every later attempt for this
+		// chat hits "Connection cannot be initialized more than once".
+		a.discardCall(chatId)
+		if joinedOnTelegram && inputGroupCall != nil {
+			go func(call tg.InputGroupCall) { _, _ = a.App.PhoneLeaveGroupCall(call, 0) }(inputGroupCall)
+		}
+	}()
+
 	if chatId < 0 {
 		if a.self == nil {
 			return errors.New("assistant is not ready")
 		}
 		var err error
 		jsonParams, err = a.binding.CreateCall(chatId)
+		if err != nil && fresh && isAlreadyExistsError(err) {
+			// A stale native entry survived from an earlier failure; reset it.
+			a.App.Log.Warnf("stale native call for chat %d, resetting", chatId)
+			a.discardCall(chatId)
+			jsonParams, err = a.binding.CreateCall(chatId)
+		}
 		if err != nil {
-			_ = a.binding.Stop(chatId)
+			if fresh {
+				a.discardCall(chatId) // CreateCall can fail after registering the entry
+			}
 			return err
 		}
+		created = true
 
 		if err = a.binding.SetStreamSources(chatId, ntgcalls.CaptureStream, mediaDescription); err != nil {
-			_ = a.binding.Stop(chatId)
 			return err
 		}
 
-		inputGroupCall, err := a.getInputGroupCall(chatId)
+		inputGroupCall, err = a.getInputGroupCall(chatId)
 		if err != nil {
-			_ = a.binding.Stop(chatId)
 			return err
 		}
 
 		resultParams := "{\"transport\": null}"
-		callResRaw, err := a.App.PhoneJoinGroupCall(
-			&tg.PhoneJoinGroupCallParams{
-				Muted:        false,
-				VideoStopped: mediaDescription.Camera == nil,
-				Call:         inputGroupCall,
-				Params: &tg.DataJson{
-					Data: jsonParams,
-				},
-				JoinAs: &tg.InputPeerUser{
-					UserID:     a.self.ID,
-					AccessHash: a.self.AccessHash,
-				},
+		joinParams := &tg.PhoneJoinGroupCallParams{
+			Muted:        false,
+			VideoStopped: mediaDescription.Camera == nil,
+			Call:         inputGroupCall,
+			Params: &tg.DataJson{
+				Data: jsonParams,
 			},
-		)
+			JoinAs: &tg.InputPeerUser{
+				UserID:     a.self.ID,
+				AccessHash: a.self.AccessHash,
+			},
+		}
+		callResRaw, err := a.App.PhoneJoinGroupCall(joinParams)
+		for attempt := 1; err != nil && attempt < joinAttempts && isTransientJoinError(err); attempt++ {
+			a.App.Log.Warnf("PhoneJoinGroupCall failed for chat %d (attempt %d/%d): %v", chatId, attempt, joinAttempts, err)
+			select {
+			case <-time.After(time.Duration(attempt) * time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			callResRaw, err = a.App.PhoneJoinGroupCall(joinParams)
+		}
 		if err != nil {
 			return err
 		}
+		joinedOnTelegram = true
 
-		callRes := callResRaw.(*tg.UpdatesObj)
-		for _, update := range callRes.Updates {
-			if connUpdate, ok := update.(*tg.UpdateGroupCallConnection); ok {
-				resultParams = connUpdate.Params.Data
+		if callRes, ok := callResRaw.(*tg.UpdatesObj); ok {
+			for _, update := range callRes.Updates {
+				if connUpdate, ok := update.(*tg.UpdateGroupCallConnection); ok {
+					resultParams = connUpdate.Params.Data
+				}
 			}
 		}
 
@@ -180,12 +293,20 @@ func (a *Assistant) connectCall(ctx context.Context, chatId int64, mediaDescript
 
 	select {
 	case err := <-connectCh:
-		return err
+		if err != nil {
+			return err
+		}
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(connectWaitTimeout):
 		return fmt.Errorf("connection timeout")
 	}
+
+	success = true
+	a.mu.Lock()
+	a.active[chatId] = true
+	a.mu.Unlock()
+	return nil
 }
 
 func (a *Assistant) joinPresentation(ctx context.Context, chatId int64, join bool) error {
@@ -561,6 +682,7 @@ func (a *Assistant) onGroupCall(m tg.Update, _ *tg.Client) error {
 		case *tg.GroupCallDiscarded:
 			a.mu.Lock()
 			delete(a.inputGroupCalls, chatID)
+			delete(a.active, chatID)
 			a.mu.Unlock()
 			_ = a.binding.Stop(chatID)
 			return nil
