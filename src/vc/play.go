@@ -33,7 +33,10 @@ func classifyError(err error) errorKind {
 		return errRetryOnce
 	case strings.Contains(msg, "CHANNELS_TOO_MUCH"),
 		strings.Contains(msg, "FROZEN_METHOD_INVALID"),
-		strings.Contains(msg, "FLOOD_WAIT_X"):
+		strings.Contains(msg, "FLOOD_WAIT_X"),
+		// Inter-DC failures (code 500) that survived the in-place retries in
+		// connectCall; another assistant may sit on a healthier DC.
+		strings.Contains(msg, "INTERDC_"):
 		return errRotate
 	default:
 		return errUnknown
