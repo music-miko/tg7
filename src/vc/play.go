@@ -57,6 +57,11 @@ func fatalMessage(err error) error {
 
 // PlayMedia plays media in a voice chat with automatic assistant rotation on certain errors.
 func (c *TelegramCalls) PlayMedia(bot *td.Client, chatID int64, filePath string, video bool, ffmpegParameters string) error {
+	if ffmpegParameters == "" {
+		// A fresh track (not a seek) starts from 0.
+		c.clearPlayedOffset(chatID)
+	}
+
 	call, index, err := c.GetGroupAssistant(chatID)
 	if err != nil {
 		return err

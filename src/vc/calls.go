@@ -152,6 +152,8 @@ func (c *TelegramCalls) Stop(chatId int64, banned bool) error {
 	}
 
 	c.cancelPrefetch(chatId)
+	c.clearPlayedOffset(chatId)
+	c.clearAutoplayHistory(chatId)
 	cache.ChatCache.SetAutoplay(chatId, false)
 	cache.ChatCache.ClearChat(chatId)
 	err = call.stopCall(chatId, banned)
@@ -243,7 +245,9 @@ func (c *TelegramCalls) PlayedTime(chatId int64) (uint64, error) {
 		return 0, fmt.Errorf("failed to get played time: %w", err)
 	}
 
-	return _time, nil
+	// ntgcalls' clock restarts with every new source (e.g. after a seek), so
+	// add back the position that source started at.
+	return _time + c.playedOffset(chatId), nil
 }
 
 // SeekStream jumps to a specific time in the current media stream.
@@ -263,7 +267,15 @@ func (c *TelegramCalls) SeekStream(bot *td.Client, chatID int64, filePath string
 		ffmpegParams = fmt.Sprintf("-ss %d -to %d", toSeek, duration)
 	}
 
-	return c.PlayMedia(bot, chatID, filePath, isVideo, ffmpegParams)
+	// Remember where this source starts so PlayedTime stays accurate; roll
+	// back if the seek fails and the old source keeps playing.
+	prev := c.playedOffset(chatID)
+	c.setPlayedOffset(chatID, uint64(toSeek))
+	if err := c.PlayMedia(bot, chatID, filePath, isVideo, ffmpegParams); err != nil {
+		c.setPlayedOffset(chatID, prev)
+		return err
+	}
+	return nil
 }
 
 // RegisterHandlers sets up the event handlers for the voice call client.

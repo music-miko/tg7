@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/big"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,10 +83,23 @@ func (c *TelegramCalls) handleAutoplay(bot *td.Client, chatID int64, lastSong *u
 		return c.handleNoSong(bot, chatID)
 	}
 
+	// Prefer tracks autoplay hasn't already used in this session so it doesn't
+	// ping-pong between the same few songs. If the pool is exhausted, forget
+	// the history and fall back to "anything but the track that just played"
+	// so autoplay keeps going as documented.
+	history := c.autoplayHistoryFor(chatID)
 	var candidates []utils.MusicTrack
 	for _, t := range tracks.Results {
-		if t.Id != lastSong.TrackID {
+		if t.Id != lastSong.TrackID && !slices.Contains(history, t.Id) {
 			candidates = append(candidates, t)
+		}
+	}
+	if len(candidates) == 0 {
+		c.clearAutoplayHistory(chatID)
+		for _, t := range tracks.Results {
+			if t.Id != lastSong.TrackID {
+				candidates = append(candidates, t)
+			}
 		}
 	}
 
@@ -101,6 +115,8 @@ func (c *TelegramCalls) handleAutoplay(bot *td.Client, chatID int64, lastSong *u
 		nextTrack = candidates[n.Int64()]
 	}
 
+	c.rememberAutoplay(chatID, lastSong.TrackID, nextTrack.Id)
+
 	saveCache := &utils.CachedTrack{
 		URL: nextTrack.Url, Name: nextTrack.Title, User: "Autoplay",
 		Thumbnail: nextTrack.Thumbnail, TrackID: nextTrack.Id, Duration: nextTrack.Duration,
@@ -109,6 +125,39 @@ func (c *TelegramCalls) handleAutoplay(bot *td.Client, chatID int64, lastSong *u
 
 	cache.ChatCache.AddSong(chatID, saveCache)
 	return c.playSong(bot, chatID, saveCache)
+}
+
+// autoplayHistoryMax bounds how many track IDs we remember per chat.
+const autoplayHistoryMax = 50
+
+// autoplayHistoryFor returns a copy of the autoplay history for chatID.
+func (c *TelegramCalls) autoplayHistoryFor(chatID int64) []string {
+	c.autoplayMu.Lock()
+	defer c.autoplayMu.Unlock()
+	return slices.Clone(c.autoplayHistory[chatID])
+}
+
+// rememberAutoplay records track IDs autoplay has used, oldest dropped first.
+func (c *TelegramCalls) rememberAutoplay(chatID int64, ids ...string) {
+	c.autoplayMu.Lock()
+	defer c.autoplayMu.Unlock()
+	h := c.autoplayHistory[chatID]
+	for _, id := range ids {
+		if id != "" && !slices.Contains(h, id) {
+			h = append(h, id)
+		}
+	}
+	if extra := len(h) - autoplayHistoryMax; extra > 0 {
+		h = h[extra:]
+	}
+	c.autoplayHistory[chatID] = h
+}
+
+// clearAutoplayHistory forgets the autoplay history for chatID.
+func (c *TelegramCalls) clearAutoplayHistory(chatID int64) {
+	c.autoplayMu.Lock()
+	defer c.autoplayMu.Unlock()
+	delete(c.autoplayHistory, chatID)
 }
 
 // handleNoSong manages the situation where there are no more songs in the queue by stopping the playback

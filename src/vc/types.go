@@ -39,6 +39,16 @@ type TelegramCalls struct {
 	// one ends. See prefetch.go.
 	prefetchMu     sync.Mutex
 	prefetchTimers map[int64]*time.Timer
+
+	// timeOffsets holds, per chatID, the position (in seconds) the current
+	// ffmpeg source started at after a /seek. See time.go.
+	offsetMu    sync.RWMutex
+	timeOffsets map[int64]uint64
+
+	// autoplayHistory holds, per chatID, the YouTube IDs autoplay has already
+	// used so it doesn't bounce between the same few tracks. See helpers.go.
+	autoplayMu      sync.Mutex
+	autoplayHistory map[int64][]string
 }
 
 var (
@@ -56,6 +66,9 @@ func getCalls() *TelegramCalls {
 			inviteCache:    cache.NewCache[string](2 * time.Hour),
 			leaving:        make(map[int]bool),
 			prefetchTimers: make(map[int64]*time.Timer),
+
+			timeOffsets:     make(map[int64]uint64),
+			autoplayHistory: make(map[int64][]string),
 		}
 	})
 	return instance

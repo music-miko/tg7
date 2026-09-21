@@ -50,6 +50,7 @@ func getHelpCategories() map[string]struct {
 			Title: "User Commands",
 			Content: detailsBlock("Playback", cmdTable(
 				[2]string{"/play [song]", "Searches and plays a track in the group's voice chat. Accepts a search query or a direct link (YouTube, Spotify, Apple Music, SoundCloud, Deezer, JioSaavn)."},
+				[2]string{"/mix [song or link]", "Queues a YouTube Mix (radio) built around a song, a YouTube link, or the track that's playing right now."},
 				[2]string{"/vplay [song]", "Same as /play, but streams video instead of audio."},
 			)) + "\n" +
 				"<i>Admins have two more ways to play — see Autoplay and Admin Commands below.</i>\n" +
@@ -85,6 +86,9 @@ func getHelpCategories() map[string]struct {
 					[2]string{"/remove [position]", "Removes a specific track from the queue by its position number."},
 					[2]string{"/loop [0-10]", "Repeats the current track 0-10 times; 0 turns looping off."},
 				)) + "\n" +
+				detailsBlock("Assistant", cmdTable(
+					[2]string{"/join [invite link]", "Makes the assistant join this group now. Pass an invite link or @username if the bot can't create one itself. Also works as /link."},
+				)) + "\n" +
 				detailsBlock("Access Control", cmdTable(
 					[2]string{"/auth [reply]", "Authorizes a user to use admin commands even if they aren't a group admin. Reply to their message."},
 					[2]string{"/unauth [reply]", "Removes a previously authorized user's access."},
@@ -118,6 +122,15 @@ func getHelpCategories() map[string]struct {
 					[2]string{"/leaveAll", "Makes every assistant leave every chat it's currently in."},
 					[2]string{"/logger", "Shows or toggles the bot's playback logging."},
 				)) + "\n" +
+				detailsBlock("Broadcast", "<p>Reply to a message with <code>/broadcast</code> to send it to every group and user the bot knows. \n"+
+					"It runs in the background at a throttled rate (default 8 messages/sec) so the music bot stays responsive, skips targets already known to be unreachable, retries after Telegram flood waits, and saves its progress so it can be resumed.</p>"+
+					cmdTable(
+						[2]string{"/broadcast [-chat|-user|-both] [-copy] [-rate N] [-new]", "Starts a broadcast. -chat/-user limit the audience, -copy sends a copy instead of a forward, -rate sets messages per second (0.5-25), -new discards an unfinished broadcast first."},
+						[2]string{"/broadcast_rate [N]", "Changes the speed of the running broadcast."},
+						[2]string{"/stop_broadcast", "Pauses the running broadcast. Progress is saved."},
+						[2]string{"/broadcast_resume [-rate N]", "Continues the last unfinished broadcast from where it stopped. Reply to the original message if the bot can't fetch it itself."},
+					),
+				) + "\n" +
 				detailsBlock("Backups", cmdTable(
 					[2]string{"/backup", "Takes an on-demand full database backup and sends it as a .zip here."},
 					[2]string{"/restore", "Reply to a backup .zip with this to restore the database from it. A daily automatic backup is also sent to the configured backup chat."},

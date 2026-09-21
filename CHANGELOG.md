@@ -4,6 +4,50 @@
 
 ### New
 
+- **Throttled, resumable `/broadcast`** (`src/core/broadcast/`,
+  `src/handlers/broadcast.go`, `src/core/db/broadcast.go`) — sized so ~80k
+  targets finish in about 3 hours without starving the music bot:
+  - New dependency-free engine: a shared rate limiter (default **8 msg/s**,
+    `-rate N`, 0.5–25) with a few workers, instead of one send + a fixed
+    200 ms sleep at a time. Change it live with `/broadcast_rate N`.
+  - A Telegram flood wait now pauses **all** workers, lowers the rate, then
+    climbs back after a quiet minute, and the affected target is **retried**
+    instead of being silently skipped (previous behaviour: it was dropped
+    after sleeping `wait+30s`).
+  - Progress is saved every 15 s (contiguous "watermark" by ID). `/stop_broadcast`
+    now pauses instead of abandoning, and `/broadcast_resume` continues after
+    the last completed target, even after a restart. `-new` discards an
+    unfinished run. A few targets near the stop point may be sent twice.
+  - Known-dead targets (blocked/deleted/invalid) are excluded up front by the
+    database query and the count is reported; newly discovered ones are flagged
+    in **bulk** every checkpoint instead of one write per failure.
+  - The status message now shows percent, delivered/skipped/failed counts, rate
+    and ETA, updated every 30 s. A panic while handling one target is contained
+    to that target.
+- **`/mix`** (`src/handlers/mix.go`, `src/core/dl/youtube_search.go`) — queues
+  a YouTube Mix (radio) built around a search query, a YouTube link, a
+  replied-to message, or the track currently playing. Skips tracks already in
+  the queue and never overfills it (max 10 per run). Non-YouTube tracks seed
+  the mix from their title.
+- **`/join` and `/link`** (`src/handlers/join.go`, `src/vc/userbot.go`) —
+  admins/devs can make the assistant join the group on demand, optionally via
+  an invite link or `@username` for groups where the bot can't create links.
+  Drops the cached membership first so a stale "already a member" entry can't
+  mask a departed assistant.
+- **Autoplay history** (`src/vc/helpers.go`) — autoplay remembers the last 50
+  tracks it used per chat and prefers unseen ones, so it stops ping-ponging
+  between the same songs. Falls back to repeats only when the pool is spent.
+
+### Fixed
+
+- **`/seek` and `/queue` position after a seek** (`src/vc/time.go`,
+  `calls.go`, `play.go`) — ntgcalls' clock restarts with each new ffmpeg
+  source, so after one `/seek` the next one (and `/queue`) computed the
+  position from 0. The start offset is now tracked and added back.
+- **Failed voice-chat joins no longer poison retries** (`src/vc/assistant.go`,
+  `play.go`) — see patch notes: native call cleanup on failure, retry of
+  transient `INTERDC_` 500s, per-chat play lock, and stale-call reset.
+
 - **Bot API 10.3 rollout: native buttons, ephemeral dev output, and
   documents-in-rich-messages**
   (`src/handlers/richtext.go`, `mute.go`, `pause.go`, `settings.go`,

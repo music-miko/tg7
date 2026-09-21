@@ -272,6 +272,49 @@ func GetYouTubeMixPlaylist(ctx context.Context, playlistID string) (utils.Platfo
 	return buildTrackList(videos, mapMixVideo), nil
 }
 
+// GetYouTubeMix builds a YouTube "Mix" (the RD... radio playlist) around a seed.
+// The seed is, in order of preference: seedTrackID, the video ID inside a
+// YouTube URL passed as query, or the top search hit for query. limit <= 0
+// means "no cap". Duplicate IDs are dropped.
+func GetYouTubeMix(ctx context.Context, query, seedTrackID string, limit int) ([]utils.MusicTrack, error) {
+	seed := seedTrackID
+	if seed == "" && strings.Contains(strings.ToLower(query), "youtu") {
+		seed = extractVideoID(query)
+	}
+	if seed == "" {
+		if strings.TrimSpace(query) == "" {
+			return nil, errors.New("no query or seed track provided")
+		}
+		hits, err := searchYouTube(query, 1)
+		if err != nil {
+			return nil, err
+		}
+		if len(hits) == 0 {
+			return nil, errors.New("no tracks found for that query")
+		}
+		seed = hits[0].Id
+	}
+
+	mix, err := GetYouTubeMixPlaylist(ctx, "RD"+seed)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool, len(mix.Results))
+	out := make([]utils.MusicTrack, 0, len(mix.Results))
+	for _, t := range mix.Results {
+		if t.Id == "" || seen[t.Id] {
+			continue
+		}
+		seen[t.Id] = true
+		out = append(out, t)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // buildTrackList converts raw renderer maps to MusicTrack, dropping empty IDs.
 func buildTrackList(videos []map[string]any, mapper func(map[string]any) utils.MusicTrack) utils.PlatformTracks {
 	out := make([]utils.MusicTrack, 0, len(videos))

@@ -139,17 +139,52 @@ func (c *TelegramCalls) checkUserStats(bot *td.Client, chatID int64, call *Assis
 
 // joinUb joins the assistant to chatID via an ChatInviteLink link.
 func (c *TelegramCalls) joinUb(bot *td.Client, chatID int64, call *Assistant, index int) error {
+	return c.joinUbWithLink(bot, chatID, call, index, "")
+}
+
+// JoinAssistant makes the assistant assigned to chatID join it. With a
+// non-empty customLink (t.me invite link or @username) that link is used
+// instead of the bot-generated one, which helps in groups where the bot can't
+// create invite links. Without one, the cached membership is dropped first so
+// a stale "already a member" entry can't hide the fact the assistant left.
+func (c *TelegramCalls) JoinAssistant(bot *td.Client, chatID int64, customLink string) (*Assistant, error) {
+	call, index, err := c.GetGroupAssistant(chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	if link := strings.TrimSpace(customLink); link != "" {
+		if err := c.joinUbWithLink(bot, chatID, call, index, link); err != nil {
+			return nil, err
+		}
+		return call, nil
+	}
+
+	c.statusCache.Delete(fmt.Sprintf("%d:%d", chatID, call.App.Me().ID))
+	if err := c.joinAssistant(bot, chatID, call, index); err != nil {
+		return nil, err
+	}
+	return call, nil
+}
+
+// joinUbWithLink is joinUb with an optional caller-supplied link. A custom link
+// is never cached and never swapped for a regenerated one on expiry.
+func (c *TelegramCalls) joinUbWithLink(bot *td.Client, chatID int64, call *Assistant, index int, customLink string) error {
 	ub := call.App
 	cacheKey := strconv.FormatInt(chatID, 10)
 
-	link, err := c.resolveInviteLink(bot, chatID, cacheKey)
-	if err != nil {
-		return err
+	link := customLink
+	if link == "" {
+		var err error
+		link, err = c.resolveInviteLink(bot, chatID, cacheKey)
+		if err != nil {
+			return err
+		}
 	}
 
 	logger.Info("joining via invite link", "chat_id", chatID, "index", index)
 
-	_, err = ub.JoinChannel(link)
+	_, err := ub.JoinChannel(link)
 	if err != nil {
 		// The cached link can go stale between resolveInviteLink returning it
 		// and JoinChannel actually using it (e.g. it was just revoked, or the
@@ -157,7 +192,7 @@ func (c *TelegramCalls) joinUb(bot *td.Client, chatID int64, call *Assistant, in
 		// surfacing "invite link expired" to the user on the very first hit,
 		// drop the stale entry, mint one fresh link, and retry once before
 		// giving up.
-		if strings.Contains(err.Error(), "INVITE_HASH_EXPIRED") {
+		if customLink == "" && strings.Contains(err.Error(), "INVITE_HASH_EXPIRED") {
 			c.inviteCache.Delete(cacheKey)
 
 			freshLink, freshErr := c.resolveInviteLink(bot, chatID, cacheKey)
