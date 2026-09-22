@@ -1,4 +1,0 @@
-services:
-  tgmusic:
-    build: .
-    env_file: .env
