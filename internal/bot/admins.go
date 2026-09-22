@@ -153,7 +153,7 @@ You can request deletion of your stored data or block the bot to stop further in
 Changes to this privacy policy will be announced through the bot.
 
 <b>10. Contact:</b>
-Questions? Contact our <a href="https://t.me/GuardxSupport">Support Group</a>.
+Questions? Contact our <a href="https://t.me/ArcChatz">Support Group</a>.
 
 ──────────────────
 <b>Note:</b> This policy is intended to provide a safe and respectful experience with %s.`,
