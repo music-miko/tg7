@@ -22,12 +22,13 @@ import (
 
 // Chats represents a chat document in the database.
 type Chats struct {
-	ID        int64  `bson:"_id"`
-	PlayType  int    `bson:"play_type"`
-	AdminPlay bool   `bson:"admin_play"`
-	AdminMode string `bson:"admin_mode"`
-	CmdDelete bool   `bson:"cmd_delete"`
-	Invalid   bool   `bson:"invalid,omitempty"`
+	ID        int64     `bson:"_id"`
+	PlayType  int       `bson:"play_type"`
+	AdminPlay bool      `bson:"admin_play"`
+	AdminMode string    `bson:"admin_mode"`
+	CmdDelete bool      `bson:"cmd_delete"`
+	JoinedAt  time.Time `bson:"joined_at,omitempty"`
+	Invalid   bool      `bson:"invalid,omitempty"`
 }
 
 // getChat retrieves a chat's data from the cache or database.
@@ -93,8 +94,17 @@ func (db *Database) AddChat(chatID int64) error {
 	ctx, cancel := db.ctx()
 	defer cancel()
 
-	_, err := db.chatDB.UpdateOne(ctx, bson.M{"_id": chatID}, bson.M{"$setOnInsert": bson.M{}}, options.UpdateOne().SetUpsert(true))
-	if err == nil {
+	res, err := db.chatDB.UpdateOne(
+		ctx,
+		bson.M{"_id": chatID},
+		bson.M{"$setOnInsert": bson.M{"joined_at": time.Now().UTC()}},
+		options.UpdateOne().SetUpsert(true),
+	)
+	if err == nil && res.UpsertedCount > 0 {
+		// Only log when a document was actually inserted. Without this
+		// check, every no-op upsert against an already-existing chat
+		// (e.g. TDLib replaying its full chat list on reconnect) would
+		// log "A new chat has been added" even though nothing changed.
 		slog.Info("[DB] A new chat has been added", "id", chatID)
 	}
 	return err
@@ -273,4 +283,75 @@ func (db *Database) GetChatCounts() (*ChatCounts, error) {
 	}
 
 	return &ChatCounts{Total: total, Active: total - invalid, Invalid: invalid}, nil
+}
+
+// ChatJoinStats summarizes how many groups the bot was added to over
+// different rolling windows, based on each chat's joined_at timestamp.
+// GroupsBeforeTracking counts chats that exist but predate the joined_at
+// field being introduced (their exact join date is unknown).
+type ChatJoinStats struct {
+	Total                int64
+	Today                int64
+	Last7Days            int64
+	Last30Days           int64
+	LastYear             int64
+	GroupsBeforeTracking int64
+}
+
+// GetChatJoinStats computes group-join counters for today, the last 7 days,
+// the last 30 days, and the last year, plus the all-time total.
+func (db *Database) GetChatJoinStats() (*ChatJoinStats, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	total, err := db.chatDB.CountDocuments(ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+
+	countSince := func(since time.Time) (int64, error) {
+		return db.chatDB.CountDocuments(ctx, bson.M{"joined_at": bson.M{"$gte": since}})
+	}
+
+	today, err := countSince(todayStart)
+	if err != nil {
+		return nil, err
+	}
+
+	last7, err := countSince(now.AddDate(0, 0, -7))
+	if err != nil {
+		return nil, err
+	}
+
+	last30, err := countSince(now.AddDate(0, 0, -30))
+	if err != nil {
+		return nil, err
+	}
+
+	lastYear, err := countSince(now.AddDate(-1, 0, 0))
+	if err != nil {
+		return nil, err
+	}
+
+	untracked, err := db.chatDB.CountDocuments(ctx, bson.M{
+		"$or": []bson.M{
+			{"joined_at": bson.M{"$exists": false}},
+			{"joined_at": time.Time{}},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ChatJoinStats{
+		Total:                total,
+		Today:                today,
+		Last7Days:            last7,
+		Last30Days:           last30,
+		LastYear:             lastYear,
+		GroupsBeforeTracking: untracked,
+	}, nil
 }

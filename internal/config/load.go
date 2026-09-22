@@ -20,20 +20,20 @@ import (
 )
 
 const (
-	defaultDBName         = "dead"
+	defaultDBName         = "Anon"
 	defaultAPIURL         = "https://api.onegrab.fun"
 	defaultArcAPIURL      = "https://api.arcmusic.fun"
 	defaultService        = "youtube"
 	defaultDownloadsDir   = "downloads"
-	defaultSupportGroup   = "https://t.me/ArcChatz"
-	defaultSupportChannel = "https://t.me/ArcUpdates"
-	defaultStartImage     = "https://graph.org/file/53da2da07394e68711e96-76893b7d22247cde3b.jpg"
+	defaultSupportGroup   = "https://t.me/FallenSupport"
+	defaultSupportChannel = "https://t.me/FallenProjects"
+	defaultStartImage     = "https://i.pinimg.com/736x/0d/f4/65/0df465d1e98239ecb6283400605fc813.jpg"
 	defaultMaxFileSize    = int64(500 * 1024 * 1024)
-	defaultSongDuration   = int32(14400)
+	defaultSongDuration   = int32(3600)
 	defaultSessionType    = "pyrogram"
 	defaultMaxSessions    = 10
 	defaultAutoPlay       = int32(10)
-	defaultAutoLeave      = true
+	defaultAutoLeave      = false
 	defaultVideoPlayback  = true
 )
 

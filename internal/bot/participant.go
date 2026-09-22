@@ -20,26 +20,6 @@ import (
 	"github.com/AshokShau/gotdbot"
 )
 
-func handleNewChat(c *gotdbot.Client, update *gotdbot.UpdateNewChat) error {
-	chat := update.Chat
-	if chat == nil {
-		return nil
-	}
-
-	switch chat.Type.(type) {
-	case *gotdbot.ChatTypeSupergroup:
-		if err := db.Instance.AddChat(chat.Id); err != nil {
-			c.Logger.Warnf("Failed to add chat to database: chat_id=%d error=%v", chat.Id, err)
-		}
-	case *gotdbot.ChatTypePrivate:
-		if err := db.Instance.AddUser(chat.Id); err != nil {
-			c.Logger.Warnf("Failed to add user to database: user_id=%d error=%v", chat.Id, err)
-		}
-	}
-
-	return nil
-}
-
 func handleParticipant(client *gotdbot.Client, update *gotdbot.UpdateChatMember) error {
 	chatID := update.ChatId
 	if chatID > 0 {

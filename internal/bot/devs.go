@@ -116,6 +116,74 @@ func leaveAllHandler(c *td.Client, m *td.Message) error {
 	return err
 }
 
+// asHandler handles the /as command: invites every running assistant into
+// the configured logger group, and reports which ones joined vs failed.
+func asHandler(c *td.Client, m *td.Message) error {
+	if !isDev(c, m) {
+		return td.EndGroups
+	}
+
+	if config.LoggerId == 0 {
+		_, _ = m.ReplyText(c, "Please set LOGGER_ID in .env first.", nil)
+		return td.EndGroups
+	}
+
+	results := calls.Calls.JoinAllAssistants(c, config.LoggerId)
+	if len(results) == 0 {
+		_, err := m.ReplyText(c, "No assistants are currently running.", nil)
+		return err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<h3>🤝 Assistant Invite Results</h3>")
+
+	sb.WriteString("<table bordered striped>")
+	sb.WriteString("<tr><th>Client</th><th>Assistant</th><th>Status</th></tr>")
+
+	var joined, failed int
+	var failLines []string
+	for _, r := range results {
+		name := fmt.Sprintf("%d", r.UserID)
+		if r.Username != "" {
+			name = "@" + r.Username
+		}
+
+		status := "✅ OK"
+		if !r.Success() {
+			failed++
+			status = "❌ FAILED"
+			failLines = append(failLines, fmt.Sprintf(
+				"client%d (%s): %s", r.Index, html.EscapeString(name), html.EscapeString(truncate(r.Err.Error(), 150)),
+			))
+		} else {
+			joined++
+		}
+
+		sb.WriteString(fmt.Sprintf(
+			"<tr><td align='left'>client%d</td><td align='left'>%s</td><td align='left'>%s</td></tr>",
+			r.Index, html.EscapeString(name), status,
+		))
+	}
+
+	sb.WriteString(fmt.Sprintf(
+		"<tr><td align='left'><b>Total</b></td><td></td><td align='left'><b>%d/%d</b></td></tr>",
+		joined, joined+failed,
+	))
+	sb.WriteString("</table>")
+
+	if len(failLines) > 0 {
+		sb.WriteString("<details>")
+		sb.WriteString("<summary><b>Failure details</b></summary>")
+		sb.WriteString("<br>")
+		sb.WriteString(strings.Join(failLines, "<br>"))
+		sb.WriteString("</details>")
+	}
+
+	richMessage := &td.InputRichMessage{Source: &td.RichMessageSourceHtml{Text: sb.String()}}
+	_, err := m.ReplyRichMessage(c, richMessage, nil)
+	return err
+}
+
 func loggerHandler(c *td.Client, m *td.Message) error {
 	if !isDev(c, m) {
 		return td.EndGroups

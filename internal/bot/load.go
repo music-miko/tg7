@@ -38,6 +38,9 @@ func LoadModules(c *gotdbot.Client) {
 	c.OnCommand("clearass", clearAssistantsHandler)
 	c.OnCommand("clearAssistants", clearAssistantsHandler)
 	c.OnCommand("leaveAll", leaveAllHandler)
+	c.OnCommand("as", asHandler)
+	c.OnCommand("gs", groupStatsHandler)
+	c.OnCommand("groupstats", groupStatsHandler)
 	c.OnCommand("logger", loggerHandler)
 	c.OnCommand("privacy", privacyHandler)
 	c.OnCommand("autoplay", autoplayHandler)
@@ -86,7 +89,6 @@ func LoadModules(c *gotdbot.Client) {
 	c.OnUpdateNewCallbackQuery(autoplayCallbackHandler, callbackquery.Equal("autoplay_toggle"))
 
 	c.OnUpdateChatMember(handleParticipant, nil)
-	c.OnUpdateNewChat(handleNewChat, nil)
 	c.OnUpdateNewMessage(handleVoiceChatMessage, nil)
 
 	c.Logger.Debug("Handlers loaded successfully")
