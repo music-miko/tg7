@@ -29,7 +29,7 @@ const (
 	// per-bot limit: it keeps most of that budget free for the music bot's own
 	// traffic (now-playing messages, button callbacks, queue edits) while a
 	// broadcast is running. 8/s finishes ~81k targets in under 3 hours.
-	defaultBroadcastRate = 8.0
+	defaultBroadcastRate = 5.6
 
 	// bcCheckpointEvery is how often progress is saved to the database (so a
 	// restart can resume) and known-dead targets are flushed in bulk.
