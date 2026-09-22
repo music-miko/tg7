@@ -81,12 +81,16 @@ func LoadModules(c *gotdbot.Client) {
 	c.OnCommand("myplaylists", myPlaylistsHandler)
 	c.OnCommand("myplist", myPlaylistsHandler)
 	c.OnCommand("stats", statsHandler)
+	c.OnCommand("yt", ytStatsHandler)
+	c.OnCommand("backup", backupHandler)
+	c.OnCommand("restore", restoreHandler)
 
 	c.OnUpdateNewCallbackQuery(helpCallbackHandler, callbackquery.Prefix("help_"))
 	c.OnUpdateNewCallbackQuery(playCallbackHandler, callbackquery.Prefix("play_"))
 	c.OnUpdateNewCallbackQuery(vcPlayHandler, callbackquery.Prefix("vcplay_"))
 	c.OnUpdateNewCallbackQuery(settingsCallbackHandler, callbackquery.Prefix("settings_"))
 	c.OnUpdateNewCallbackQuery(autoplayCallbackHandler, callbackquery.Equal("autoplay_toggle"))
+	c.OnUpdateNewCallbackQuery(backupDeleteCallbackHandler, callbackquery.Equal("backup_delete"))
 
 	c.OnUpdateChatMember(handleParticipant, nil)
 	c.OnUpdateNewMessage(handleVoiceChatMessage, nil)

@@ -85,6 +85,26 @@ func getEnvInt32(key string, defaultValue int32) int32 {
 	return int32(result)
 }
 
+func getEnvFloat64(key string, defaultValue float64) float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+
+	result, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		slog.Warn("invalid float configuration",
+			"key", key,
+			"value", value,
+			"default", defaultValue,
+			"error", err,
+		)
+		return defaultValue
+	}
+
+	return result
+}
+
 func getEnvBool(key string, defaultValue bool) bool {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {

@@ -26,6 +26,7 @@ import (
 	"ashokshau/tgmusic/internal/db"
 	"ashokshau/tgmusic/internal/downloader"
 	"ashokshau/tgmusic/ntgcalls"
+	"context"
 	"fmt"
 	_ "net/http/pprof"
 	"os"
@@ -90,11 +91,17 @@ func main() {
 
 	calls.Calls.RegisterHandlers(client)
 	bot.LoadModules(client)
+
+	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
+	downloader.StartDownloadsCleanup(cleanupCtx, tdDir)
+	bot.StartDailyBackups(client)
+
 	msg := fmt.Sprintf("Bot started\nNtgCalls %s", ntgcalls.Version())
 	client.Logger.Info(msg)
 	_, _ = client.SendTextMessage(config.LoggerId, msg, nil)
 	manager.Idle()
 	client.Logger.Info("The bot is shutting down...")
+	stopCleanup()
 	calls.Calls.StopAllClients()
 	_ = os.Remove(config.DownloadsDir)
 }

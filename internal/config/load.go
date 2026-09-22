@@ -35,6 +35,8 @@ const (
 	defaultAutoPlay       = int32(10)
 	defaultAutoLeave      = true
 	defaultVideoPlayback  = true
+	defaultBackupHourUTC  = 3
+	defaultDiskThreshold  = 90.0
 )
 
 var (
@@ -70,6 +72,17 @@ var (
 
 	AutoLeave           = getEnvBool("AUTO_LEAVE", defaultAutoLeave)
 	EnableVideoPlayback = getEnvBool("ENABLE_VPLAY", defaultVideoPlayback)
+
+	// BackupChatId is where the daily Mongo backup zip is sent. Leave unset
+	// (0) to disable daily automatic backups; /backup still works on demand.
+	BackupChatId = getEnvInt64("BACKUP_CHAT_ID", 0)
+	// BackupHourUTC is the hour (0-23, UTC) the daily backup runs at.
+	BackupHourUTC = int(getEnvInt64("BACKUP_HOUR_UTC", defaultBackupHourUTC))
+
+	// DiskCleanupThreshold is the disk-usage percentage (0-100) of the
+	// filesystem holding DownloadsDir that triggers an immediate cache
+	// cleanup instead of waiting for the next scheduled sweep.
+	DiskCleanupThreshold = getEnvFloat64("DISK_CLEANUP_THRESHOLD", defaultDiskThreshold)
 
 	DEVS        []int64
 	CookiesPath []string
