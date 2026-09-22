@@ -4,8 +4,8 @@ For a more robust setup, use `systemd` to manage the bot as a service. This ensu
 1.  **Install prerequisites:**
     - **On Debian/Ubuntu:**
       ```sh
-      sudo apt-get update && sudo apt-get install -y golang ffmpeg unzip
-      curl -fsSL https://deno.land/install.sh | sh
+      sudo apt update
+      sudo apt install -y build-essential ffmpeg curl wget unzip git
       ```
 
     - **Install Deno** (required for YouTube download challenges):
