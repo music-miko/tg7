@@ -28,8 +28,9 @@ const (
 	// defaultBroadcastRate is deliberately far below Telegram's ~30 msg/s
 	// per-bot limit: it keeps most of that budget free for the music bot's own
 	// traffic (now-playing messages, button callbacks, queue edits) while a
-	// broadcast is running. 8/s finishes ~81k targets in under 3 hours.
-	defaultBroadcastRate = 8.0
+	// broadcast is running. 5.6/s keeps the native ntgcalls engine under less
+	// pressure and avoids timeout cascades during heavy broadcasts.
+	defaultBroadcastRate = 5.6
 
 	// bcCheckpointEvery is how often progress is saved to the database (so a
 	// restart can resume) and known-dead targets are flushed in bulk.
@@ -286,7 +287,7 @@ Usage:
 -user      : users only
 -both      : groups + users (default)
 -copy      : send as copy
--rate N    : messages per second (default 8, max 25)
+-rate N    : messages per second (default 5.6, max 25)
 -new       : discard an unfinished broadcast and start over
 
 Examples:

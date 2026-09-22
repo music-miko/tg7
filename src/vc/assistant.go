@@ -72,6 +72,11 @@ func (a *Assistant) Close() {
 	a.binding.Free()
 }
 
+// IsUnhealthy returns true if the assistant's native ntgcalls engine is unresponsive.
+func (a *Assistant) IsUnhealthy() bool {
+	return a.binding != nil && a.binding.IsUnhealthy()
+}
+
 func (a *Assistant) Play(ctx context.Context, chatId int64, mediaDescription ntgcalls.MediaDescription) error {
 	unlock := a.lockChat(chatId)
 	defer unlock()

@@ -22,6 +22,9 @@ const (
 )
 
 func classifyError(err error) errorKind {
+	if ntgcalls.IsNativeTimeout(err) {
+		return errRotate
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "is closed"),
@@ -29,11 +32,15 @@ func classifyError(err error) errorKind {
 		return errFatal
 	case strings.Contains(msg, "GROUPCALL_INVALID"):
 		return errFatal
-	case strings.Contains(msg, "GROUPCALL_ADD_PARTICIPANTS_FAILED"):
+	case strings.Contains(msg, "GROUPCALL_ADD_PARTICIPANTS_FAILED"),
+		strings.Contains(msg, "Timeout while fetching data"),
+		strings.Contains(msg, "INTERDC_X_CALL_ERROR"):
 		return errRetryOnce
 	case strings.Contains(msg, "CHANNELS_TOO_MUCH"),
 		strings.Contains(msg, "FROZEN_METHOD_INVALID"),
 		strings.Contains(msg, "FLOOD_WAIT_X"),
+		strings.Contains(msg, "limiting join attempts"),
+		strings.Contains(msg, "USER_DEACTIVATED"),
 		// Inter-DC failures (code 500) that survived the in-place retries in
 		// connectCall; another assistant may sit on a healthier DC.
 		strings.Contains(msg, "INTERDC_"):
@@ -174,10 +181,20 @@ func (c *TelegramCalls) rotateAndPlay(bot *td.Client, chatID int64, filePath str
 	}
 }
 
-// nextUntried finds the next assistant index not yet tried in this rotation round.
+// nextUntried finds the next assistant index not yet tried in this rotation round,
+// prioritizing healthy assistants whose native engine is responsive.
 func (c *TelegramCalls) nextUntried(tried map[int]bool) (*Assistant, int, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	// First pass: look for an untried AND healthy assistant.
+	for i, call := range c.assistants {
+		if !tried[i] && !call.IsUnhealthy() {
+			return call, i, nil
+		}
+	}
+
+	// Fallback pass: any untried assistant (even if marked unhealthy).
 	for i, call := range c.assistants {
 		if !tried[i] {
 			return call, i, nil

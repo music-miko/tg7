@@ -56,10 +56,40 @@ func (c *TelegramCalls) getClientIndex(chatID int64) (int, error) {
 		assignedIndex = -1
 	}
 
+	c.mu.RLock()
+	// If assigned assistant is valid and healthy, use it.
 	if assignedIndex >= 0 && assignedIndex < totalClients {
-		return assignedIndex, nil
+		if call, ok := c.assistants[assignedIndex]; ok && !call.IsUnhealthy() {
+			c.mu.RUnlock()
+			return assignedIndex, nil
+		}
 	}
 
+	// Find healthy assistants to choose from.
+	var healthyIndices []int
+	for idx, call := range c.assistants {
+		if !call.IsUnhealthy() {
+			healthyIndices = append(healthyIndices, idx)
+		}
+	}
+	c.mu.RUnlock()
+
+	// If at least one assistant is healthy, pick randomly from healthy ones.
+	if len(healthyIndices) > 0 {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(healthyIndices))))
+		picked := healthyIndices[0]
+		if err == nil {
+			picked = healthyIndices[int(n.Int64())]
+		}
+		if chatID != 0 {
+			if _, err := db.Instance.AssignAssistant(chatID, picked); err != nil {
+				logger.Info("[TelegramCalls] DB.AssignAssistant error", "error", err)
+			}
+		}
+		return picked, nil
+	}
+
+	// Fallback to random if all are marked unhealthy (engine may recover or retry).
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(totalClients)))
 	if err != nil {
 		slog.Info("[TelegramCalls] Could not generate a random number", "error", err)
@@ -159,6 +189,12 @@ func (c *TelegramCalls) Stop(chatId int64, banned bool) error {
 	err = call.stopCall(chatId, banned)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+
+		if ntgcalls.IsNativeTimeout(err) {
+			slog.Warn("[Stop] Native call timed out while stopping call; state cleared and assistant evicted", "error", err, "index", index, "chat_id", chatId)
+			_ = db.Instance.RemoveAssistant(chatId)
 			return nil
 		}
 
