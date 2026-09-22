@@ -7,10 +7,29 @@ For a more robust setup, use `systemd` to manage the bot as a service. This ensu
       sudo apt-get update && sudo apt-get install -y golang ffmpeg unzip
       curl -fsSL https://deno.land/install.sh | sh
       ```
-    - **On macOS (using Homebrew):**
+
+    - **Install Deno** (required for YouTube download challenges):
       ```sh
-      brew install go ffmpeg deno
+      curl -fsSL https://deno.land/install.sh | sh
+      echo 'export DENO_INSTALL="$HOME/.deno"' >> ~/.bashrc
+      echo 'export PATH="$DENO_INSTALL/bin:$PATH"' >> ~/.bashrc
+      source ~/.bashrc
       ```
+      
+    - **Install yt-dlp:**
+      ```sh
+      sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+      sudo chmod a+rx /usr/local/bin/yt-dlp
+      ```
+
+    - **Install Go** (1.26 or higher required):
+      ```sh
+      wget https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
+      sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.0.linux-amd64.tar.gz
+      echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+      source ~/.bashrc
+      ```
+
 
 2.  **Clone the repository and create the `.env` file** as described in the [Configuration](#-configuration) section.
 
