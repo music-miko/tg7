@@ -13,6 +13,7 @@ import (
 	"ashokshau/tgmusic/internal/db"
 	"ashokshau/tgmusic/internal/utils"
 	"fmt"
+	"html"
 	"strings"
 
 	td "github.com/AshokShau/gotdbot"
@@ -62,7 +63,7 @@ func settingsHandler(c *td.Client, m *td.Message) error {
 	}
 
 	text := fmt.Sprintf("<u><b>%s settings</b></u>\n\nClick the buttons below to change this chat's current settings.",
-		chat.Title)
+		html.EscapeString(chat.Title))
 
 	_, err = m.ReplyText(c, text, &td.SendTextMessageOpts{ReplyMarkup: utils.SettingsKeyboard(playModeStr, getAdminMode, cmdDelete, language, autoplay), ParseMode: td.ParseModeHTML})
 	return err
@@ -159,7 +160,7 @@ func settingsCallbackHandler(c *td.Client, cb *td.UpdateNewCallbackQuery) error 
 	}
 
 	text := fmt.Sprintf("<u><b>%s settings</b></u>\n\nClick the buttons below to change this chat's current settings.",
-		chat.Title)
+		html.EscapeString(chat.Title))
 
 	_, err = cb.EditMessageText(c, text, &td.EditTextMessageOpts{ReplyMarkup: utils.SettingsKeyboard(playModeStr, getAdminMode, cmdDelete, language, autoplay), ParseMode: td.ParseModeHTML})
 	if err != nil {
