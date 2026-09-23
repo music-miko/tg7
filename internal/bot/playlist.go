@@ -110,7 +110,7 @@ func deletePlaylistHandler(c *td.Client, m *td.Message) error {
 
 	_, err = m.ReplyText(
 		c,
-		fmt.Sprintf("Playlist <b>%s</b> has been deleted successfully.", playlist.Name),
+		fmt.Sprintf("Playlist <b>%s</b> has been deleted successfully.", html.EscapeString(playlist.Name)),
 		&td.SendTextMessageOpts{ParseMode: "HTML"},
 	)
 
@@ -204,8 +204,8 @@ func addToPlaylistHandler(c *td.Client, m *td.Message) error {
 		c,
 		fmt.Sprintf(
 			"Track <b>%s</b> has been added to playlist <b>%s</b>.",
-			song.Name,
-			playlist.Name,
+			html.EscapeString(song.Name),
+			html.EscapeString(playlist.Name),
 		),
 		replyOpts,
 	)
@@ -301,13 +301,13 @@ func playlistInfoHandler(c *td.Client, m *td.Message) error {
 
 	var songs []string
 	for i, song := range playlist.Songs {
-		songs = append(songs, fmt.Sprintf("%d. %s (%s)", i+1, song.Name, song.URL))
+		songs = append(songs, fmt.Sprintf("%d. %s (%s)", i+1, html.EscapeString(song.Name), html.EscapeString(song.URL)))
 	}
 
 	text := fmt.Sprintf(
 		"<b>Playlist Info</b>\n\n<b>Name:</b> %s\n<b>Owner:</b> %s\n<b>Songs:</b> %d\n\n%s",
-		playlist.Name,
-		ownerName,
+		html.EscapeString(playlist.Name),
+		html.EscapeString(ownerName),
 		len(playlist.Songs),
 		strings.Join(songs, "\n"),
 	)
@@ -372,7 +372,7 @@ func myPlaylistsHandler(c *td.Client, m *td.Message) error {
 	for _, playlist := range playlists {
 		playlistInfo = append(
 			playlistInfo,
-			fmt.Sprintf("- %s (<code>%s</code>)", playlist.Name, playlist.ID),
+			fmt.Sprintf("- %s (<code>%s</code>)", html.EscapeString(playlist.Name), html.EscapeString(playlist.ID)),
 		)
 	}
 
