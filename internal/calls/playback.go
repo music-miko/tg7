@@ -243,7 +243,7 @@ func (c *TelegramCalls) playTrack(bot *td.Client, chatID int64, song *utils.Play
 	}
 
 	if err = c.PlayMedia(bot, chatID, song.FilePath, song.IsVideo); err != nil {
-		_, _ = reply.EditText(bot, err.Error(), &td.EditTextMessageOpts{ParseMode: "HTML", DisableWebPagePreview: true})
+		_, _ = reply.EditText(bot, err.Error(), &td.EditTextMessageOpts{DisableWebPagePreview: true})
 		return nil
 	}
 
