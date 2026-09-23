@@ -12,6 +12,7 @@ import (
 	"ashokshau/tgmusic/internal/config"
 	"ashokshau/tgmusic/internal/utils"
 	"fmt"
+	"html"
 
 	td "github.com/AshokShau/gotdbot"
 )
@@ -24,10 +25,10 @@ func sendLogger(client *td.Client, chatID int64, song *utils.PlayerCache) {
 	text := fmt.Sprintf(
 		"<b>A song is playing</b> in <code>%d</code>\n\n‣ <b>Title:</b> <a href='%s'>%s</a>\n‣ <b>Duration:</b> %s\n‣ <b>Requested by:</b> %s\n‣ <b>Platform:</b> %s\n‣ <b>Is Video:</b> %t",
 		chatID,
-		song.URL,
-		song.Name,
+		html.EscapeString(song.URL),
+		html.EscapeString(song.Name),
 		utils.SecToMin(song.Duration),
-		song.User,
+		html.EscapeString(song.User),
 		song.Platform,
 		song.IsVideo,
 	)
