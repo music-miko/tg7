@@ -91,8 +91,9 @@ func recordArcFallback() {
 	atomic.AddInt64(&arcFallbackToYtDlp, 1)
 }
 
-// recordArcSearch marks an ArcMusic search attempt (used as a fallback when
-// InnerTube search fails) and whether it failed.
+// recordArcSearch marks an ArcMusic search attempt (the primary search path
+// for text queries, with InnerTube used as a fallback when it fails) and
+// whether it failed.
 func recordArcSearch(failed bool) {
 	atomic.AddInt64(&arcSearchAttempts, 1)
 	if failed {
