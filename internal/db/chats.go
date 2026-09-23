@@ -166,7 +166,7 @@ func (db *Database) SetPlayMode(chatID int64, adminPlay bool) error {
 func (db *Database) GetAdminMode(chatID int64) string {
 	chat, _ := db.getChat(chatID)
 	if chat == nil || chat.AdminMode == "" {
-		return utils.Everyone
+		return utils.Admins
 	}
 	return chat.AdminMode
 }
