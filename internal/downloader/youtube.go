@@ -119,25 +119,25 @@ func (y *youTubeData) getInfo() (*utils.PlatformTracks, error) {
 }
 
 func (y *youTubeData) search() (*utils.PlatformTracks, error) {
-	tracks, err := searchYouTube(y.Query, 5)
-	if err == nil && len(tracks) > 0 {
-		return &utils.PlatformTracks{Results: tracks}, nil
+	arcTracks, arcErr := newArcMusic().search(y.Query, 5)
+	recordArcSearch(arcErr != nil || len(arcTracks) == 0)
+	if arcErr == nil && len(arcTracks) > 0 {
+		return &utils.PlatformTracks{Results: arcTracks}, nil
 	}
 
-	slog.Warn("searchYouTube failed, falling back to ArcMusic search", "query", y.Query, "error", err)
-	arcTracks, arcErr := newArcMusic().search(y.Query, 3)
-	recordArcSearch(arcErr != nil || len(arcTracks) == 0)
-	if arcErr != nil {
-		if err != nil {
-			return nil, fmt.Errorf("innertube: %w; arcmusic: %v", err, arcErr)
+	slog.Warn("ArcMusic search failed, falling back to InnerTube search", "query", y.Query, "error", arcErr)
+	tracks, err := searchYouTube(y.Query, 5)
+	if err != nil {
+		if arcErr != nil {
+			return nil, fmt.Errorf("arcmusic: %w; innertube: %v", arcErr, err)
 		}
-		return nil, arcErr
+		return nil, err
 	}
-	if len(arcTracks) == 0 {
+	if len(tracks) == 0 {
 		return nil, errors.New("no video results were found")
 	}
 
-	return &utils.PlatformTracks{Results: arcTracks}, nil
+	return &utils.PlatformTracks{Results: tracks}, nil
 }
 
 func (y *youTubeData) getTrack() (*utils.TrackInfo, error) {
