@@ -164,7 +164,7 @@ func handlePlay(c *td.Client, m *td.Message, isVideo bool, force bool) error {
 			return td.EndGroups
 		}
 
-		return handleUrl(c, m, updater, trackInfo, chatID, isVideo, force)
+		return handleUrl(c, m, updater, wrapper, trackInfo, chatID, isVideo, force)
 	}
 
 	return handleTextSearch(c, m, updater, wrapper, chatID, isVideo, force)
@@ -251,18 +251,31 @@ func handleTextSearch(c *td.Client, m *td.Message, updater *td.Message, wrapper 
 		return err
 	}
 
-	return handleSingleTrack(c, m, updater, song, "", chatId, isVideo, force)
+	filePath, _ := wrapper.DownloadTrack(&utils.TrackInfo{
+		Id:       song.Id,
+		URL:      song.Url,
+		Platform: song.Platform,
+	}, isVideo)
+
+	return handleSingleTrack(c, m, updater, song, filePath, chatId, isVideo, force)
 }
 
 // handleUrl handles a URL search for a song.
-func handleUrl(c *td.Client, m *td.Message, updater *td.Message, trackInfo *utils.PlatformTracks, chatId int64, isVideo bool, force bool) error {
+func handleUrl(c *td.Client, m *td.Message, updater *td.Message, wrapper *downloader.DlWrapper, trackInfo *utils.PlatformTracks, chatId int64, isVideo bool, force bool) error {
 	if len(trackInfo.Results) == 1 {
 		track := trackInfo.Results[0]
 		if _track := cache.ChatCache.GetTrackIfExists(chatId, track.Id); _track != nil {
 			_, err := updater.EditText(c, "Track already in queue or playing.", nil)
 			return err
 		}
-		return handleSingleTrack(c, m, updater, track, "", chatId, isVideo, force)
+
+		filePath, _ := wrapper.DownloadTrack(&utils.TrackInfo{
+			Id:       track.Id,
+			URL:      track.Url,
+			Platform: track.Platform,
+		}, isVideo)
+
+		return handleSingleTrack(c, m, updater, track, filePath, chatId, isVideo, force)
 	}
 
 	return handleMultipleTracks(c, m, updater, trackInfo.Results, chatId, isVideo, force)
@@ -294,6 +307,9 @@ func handleSingleTrack(c *td.Client, m *td.Message, updater *td.Message, song ut
 		}
 
 		saveCache.FilePath = dlResult
+		if saveCache.Duration <= 0 {
+			saveCache.Duration = utils.GetMediaDuration(dlResult)
+		}
 	}
 
 	if err := calls.Calls.PlayMedia(c, chatId, saveCache.FilePath, saveCache.IsVideo); err != nil {

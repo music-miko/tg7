@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ashokshau/tgmusic/internal/db"
 	"ashokshau/tgmusic/internal/downloader"
 
 	td "github.com/AshokShau/gotdbot"
@@ -92,5 +93,140 @@ func ytStatsHandler(c *td.Client, m *td.Message) error {
 
 	richMessage := &td.InputRichMessage{Source: &td.RichMessageSourceHtml{Text: sb.String()}}
 	_, err := m.ReplyRichMessage(c, richMessage, nil)
+	return err
+}
+
+// ttStatsHandler handles the /tt command: a dashboard of TypeTube resolutions & downloads stored in MongoDB.
+func ttStatsHandler(c *td.Client, m *td.Message) error {
+	if !isDev(c, m) {
+		return td.EndGroups
+	}
+
+	args := strings.Fields(Args(m))
+	if len(args) > 0 && strings.EqualFold(args[0], "reset") {
+		_ = db.Instance.ResetTypeTubeStats()
+		_, err := m.ReplyText(c, "✅ TypeTube DB stats have been reset.", nil)
+		return err
+	}
+
+	stats, err := db.Instance.GetTypeTubeStats()
+	if err != nil {
+		_, _ = m.ReplyText(c, fmt.Sprintf("❌ Failed to fetch TypeTube stats from DB: %s", err), nil)
+		return td.EndGroups
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<h3>🚀 TypeTube Database Stats</h3>")
+
+	resolveTotal := stats.ResolutionsSuccess + stats.ResolutionsFailure
+	resolveRate := 0.0
+	if resolveTotal > 0 {
+		resolveRate = float64(stats.ResolutionsSuccess) * 100 / float64(resolveTotal)
+	}
+
+	downloadTotal := stats.DownloadsSuccess + stats.DownloadsFailure
+	downloadRate := 0.0
+	if downloadTotal > 0 {
+		downloadRate = float64(stats.DownloadsSuccess) * 100 / float64(downloadTotal)
+	}
+
+	sb.WriteString("<table bordered striped>")
+	sb.WriteString("<tr><th>Operation</th><th>Total</th><th>OK</th><th>Fail</th><th>Rate</th></tr>")
+	sb.WriteString(arcTableRow("Resolve", resolveTotal, stats.ResolutionsSuccess, stats.ResolutionsFailure, resolveRate))
+	sb.WriteString(arcTableRow("Download", downloadTotal, stats.DownloadsSuccess, stats.DownloadsFailure, downloadRate))
+	sb.WriteString("</table>")
+
+	sb.WriteString("<blockquote expandable>")
+	if !stats.LastResolveAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Resolve OK:</b> %s (%dms)<br><code>%s</code><br>",
+			tgTime(stats.LastResolveAt), stats.LastResolveDurMs, html.EscapeString(stats.LastResolveQuery)))
+	}
+	if !stats.LastDownloadAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Download OK:</b> %s (%dms, %.2f MB)<br><code>%s</code><br>",
+			tgTime(stats.LastDownloadAt), stats.LastDownloadDurMs, float64(stats.LastDownloadBytes)/(1024*1024), html.EscapeString(stats.LastDownloadTarget)))
+	}
+	if !stats.LastResolveFailAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Resolve Fail:</b> %s<br>Query: <code>%s</code><br>Error: <code>%s</code><br>",
+			tgTime(stats.LastResolveFailAt), html.EscapeString(stats.LastResolveFailQ), truncate(html.EscapeString(stats.LastResolveFailErr), 150)))
+	}
+	if !stats.LastDownloadFailAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Download Fail:</b> %s<br>Target: <code>%s</code><br>Error: <code>%s</code><br>",
+			tgTime(stats.LastDownloadFailAt), html.EscapeString(stats.LastDownloadFailT), truncate(html.EscapeString(stats.LastDownloadFailErr), 150)))
+	}
+
+	failures, _ := db.Instance.GetRecentTypeTubeFailures(5)
+	if len(failures) > 0 {
+		sb.WriteString("<br><b>Recent Failures Log:</b><br>")
+		for _, f := range failures {
+			sb.WriteString(fmt.Sprintf("• [%s] %s (<code>%s</code>): <i>%s</i><br>",
+				f.Kind, tgTime(f.Timestamp), html.EscapeString(f.Target), truncate(html.EscapeString(f.Error), 100)))
+		}
+	}
+	sb.WriteString("</blockquote>")
+	sb.WriteString("<i>Use /tt reset to clear DB stats.</i>")
+
+	richMessage := &td.InputRichMessage{Source: &td.RichMessageSourceHtml{Text: sb.String()}}
+	_, err = m.ReplyRichMessage(c, richMessage, nil)
+	return err
+}
+
+// ttStatsPublicHandler handles /ttstats: a public command displaying TypeTube stats from DB for all users.
+func ttStatsPublicHandler(c *td.Client, m *td.Message) error {
+	stats, err := db.Instance.GetTypeTubeStats()
+	if err != nil {
+		_, _ = m.ReplyText(c, fmt.Sprintf("❌ Failed to fetch TypeTube stats: %s", err), nil)
+		return td.EndGroups
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<h3>🚀 TypeTube Performance & Stats</h3>")
+
+	resolveTotal := stats.ResolutionsSuccess + stats.ResolutionsFailure
+	resolveRate := 100.0
+	if resolveTotal > 0 {
+		resolveRate = float64(stats.ResolutionsSuccess) * 100 / float64(resolveTotal)
+	}
+
+	downloadTotal := stats.DownloadsSuccess + stats.DownloadsFailure
+	downloadRate := 100.0
+	if downloadTotal > 0 {
+		downloadRate = float64(stats.DownloadsSuccess) * 100 / float64(downloadTotal)
+	}
+
+	sb.WriteString("<table bordered striped>")
+	sb.WriteString("<tr><th>Operation</th><th>Total</th><th>OK</th><th>Fail</th><th>Rate</th></tr>")
+	sb.WriteString(arcTableRow("Resolve", resolveTotal, stats.ResolutionsSuccess, stats.ResolutionsFailure, resolveRate))
+	sb.WriteString(arcTableRow("Download", downloadTotal, stats.DownloadsSuccess, stats.DownloadsFailure, downloadRate))
+	sb.WriteString("</table>")
+
+	sb.WriteString("<blockquote expandable>")
+	if !stats.LastResolveAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Resolve OK:</b> %s (%dms)<br><code>%s</code><br>",
+			tgTime(stats.LastResolveAt), stats.LastResolveDurMs, html.EscapeString(stats.LastResolveQuery)))
+	}
+	if !stats.LastDownloadAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Download OK:</b> %s (%dms, %.2f MB)<br><code>%s</code><br>",
+			tgTime(stats.LastDownloadAt), stats.LastDownloadDurMs, float64(stats.LastDownloadBytes)/(1024*1024), html.EscapeString(stats.LastDownloadTarget)))
+	}
+	if !stats.LastResolveFailAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Resolve Fail:</b> %s<br>", tgTime(stats.LastResolveFailAt)))
+	}
+	if !stats.LastDownloadFailAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("<b>Last Download Fail:</b> %s<br>", tgTime(stats.LastDownloadFailAt)))
+	}
+	sb.WriteString("</blockquote>")
+
+	richMessage := &td.InputRichMessage{Source: &td.RichMessageSourceHtml{Text: sb.String()}}
+	_, err = m.ReplyRichMessage(c, richMessage, nil)
+	if err != nil {
+		fallback := fmt.Sprintf(
+			"<b>🚀 TypeTube Stats</b>\n\n"+
+				"• <b>Resolutions:</b> %d OK | %d Fail (%.1f%%)\n"+
+				"• <b>Downloads:</b> %d OK | %d Fail (%.1f%%)",
+			stats.ResolutionsSuccess, stats.ResolutionsFailure, resolveRate,
+			stats.DownloadsSuccess, stats.DownloadsFailure, downloadRate,
+		)
+		_, err = m.ReplyText(c, fallback, &td.SendTextMessageOpts{ParseMode: "HTML"})
+	}
 	return err
 }

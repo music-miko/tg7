@@ -113,6 +113,7 @@ func adminModeCB(c *td.Client, cb *td.UpdateNewCallbackQuery) bool {
 
 func playMode(c *td.Client, m *td.Message) bool {
 	if m.IsPrivate() {
+		_, _ = m.ReplyText(c, "🎵 Music playback is only supported in group voice chats.\n\nPlease add me to a group, promote me as admin with invite permissions, and run /play there!", nil)
 		return false
 	}
 

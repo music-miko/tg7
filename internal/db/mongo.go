@@ -33,6 +33,8 @@ type Database struct {
 	langDB      *mongo.Collection
 	cacheDB     *mongo.Collection
 	broadcastDB *mongo.Collection
+	typeTubeStatsDB    *mongo.Collection
+	typeTubeFailuresDB *mongo.Collection
 
 	chatCache      *cache.Cache[*Chats]
 	userCache      *cache.Cache[*Users]
@@ -75,6 +77,8 @@ func InitDatabase() error {
 		langDB:      db.Collection("lang"),
 		cacheDB:     db.Collection("cache"),
 		broadcastDB: db.Collection("broadcast"),
+		typeTubeStatsDB:    db.Collection("typetube_stats"),
+		typeTubeFailuresDB: db.Collection("typetube_failures"),
 
 		chatCache:      cache.NewCache[*Chats](20 * time.Minute),
 		userCache:      cache.NewCache[*Users](20 * time.Minute),
