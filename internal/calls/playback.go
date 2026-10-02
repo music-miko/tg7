@@ -189,12 +189,15 @@ func (c *TelegramCalls) rotateAndPlay(bot *td.Client, chatID int64, filePath str
 }
 
 func (c *TelegramCalls) prepareTrackDownload(bot *td.Client, song *utils.PlayerCache, reply *td.Message) error {
-	if song.FilePath != "" {
+	if song.FilePath != "" && !utils.TelegramMessageRegex.MatchString(song.FilePath) {
 		return nil
 	}
 
 	dlPath, err := downloader.DlCachedTrack(song, bot)
 	song.FilePath = dlPath
+	if song.Duration <= 0 && song.FilePath != "" {
+		song.Duration = utils.GetMediaDuration(song.FilePath)
+	}
 	if err != nil || song.FilePath == "" {
 		_, _ = reply.EditText(bot, "⚠️ Download failed. Skipping track...", nil)
 		return err

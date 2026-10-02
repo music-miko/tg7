@@ -52,9 +52,19 @@ func downloadViaWrapper(cached *utils.PlayerCache, dlBot *td.Client) (string, er
 		return "", fmt.Errorf("invalid cached URL: %s", cached.URL)
 	}
 
-	track, err := wrapper.GetTrack()
-	if err != nil {
-		return "", fmt.Errorf("get track info: %w", err)
+	var track *utils.TrackInfo
+	if cached.Platform == utils.YouTube && cached.TrackID != "" {
+		track = &utils.TrackInfo{
+			Id:       cached.TrackID,
+			URL:      cached.URL,
+			Platform: utils.YouTube,
+		}
+	} else {
+		var err error
+		track, err = wrapper.GetTrack()
+		if err != nil {
+			return "", fmt.Errorf("get track info: %w", err)
+		}
 	}
 
 	path, err := wrapper.DownloadTrack(track, cached.IsVideo)

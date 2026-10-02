@@ -80,6 +80,9 @@ func LoadModules(c *gotdbot.Client) {
 	c.OnCommand("myplist", myPlaylistsHandler)
 	c.OnCommand("stats", statsHandler)
 	c.OnCommand("yt", ytStatsHandler)
+	c.OnCommand("tt", ttStatsHandler)
+	c.OnCommand("typetube", ttStatsHandler)
+	c.OnCommand("ttstats", ttStatsPublicHandler)
 	c.OnCommand("backup", backupHandler)
 	c.OnCommand("restore", restoreHandler)
 

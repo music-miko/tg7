@@ -53,6 +53,9 @@ var (
 	ApiUrl = getEnv("API_URL", defaultAPIURL)
 	ApiKey = os.Getenv("API_KEY")
 
+	TypeTubeApiKey = getEnv("TYPETUBE_API_KEY", "tt_priv_9999999")
+	TypeTubeHost   = getEnv("TYPETUBE_HOST", "https://typetube.xysushi.in")
+
 	ArcApiUrl = getEnv("ARC_API_URL", defaultArcAPIURL)
 	ArcApiKey = os.Getenv("ARC_API_KEY")
 
@@ -136,10 +139,7 @@ func validate() error {
 	}
 
 	if len(SessionStrings) == 0 {
-		return fmt.Errorf(
-			"at least one session string is required (STRING or STRING1-%d)",
-			defaultMaxSessions,
-		)
+		slog.Warn("no session string provided (STRING or STRING1-10); voice chat streaming will be disabled until a session string is added")
 	}
 
 	if MaxFileSize <= 0 {

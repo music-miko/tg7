@@ -27,14 +27,12 @@ func handleParticipant(client *gotdbot.Client, update *gotdbot.UpdateChatMember)
 	}
 
 	userID := SenderID(update.NewChatMember.MemberId)
-	assistant, _, err := calls.Calls.GetAccount(chatID)
-	if err != nil {
-		client.Logger.Error("Failed to get assistant for chat", "chat_id", chatID, "error", err)
-		return gotdbot.EndGroups
+	var assistantID int64
+	if assistant, _, err := calls.Calls.GetAccount(chatID); err == nil && assistant != nil && assistant.App != nil && assistant.App.Me() != nil {
+		assistantID = assistant.App.Me().ID
 	}
 
-	assistantID := assistant.App.Me().ID
-	if userID != client.Me.Id && userID != assistantID {
+	if userID != client.Me.Id && (assistantID == 0 || userID != assistantID) {
 		return gotdbot.EndGroups
 	}
 
