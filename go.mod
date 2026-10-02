@@ -15,7 +15,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260802145828-341c2f0c90b5 // indirect
-	github.com/playeon/typetube-go v0.1.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/shoenig/go-m1cpu v0.2.2 // indirect
 	github.com/stretchr/testify v1.12.0 // indirect
