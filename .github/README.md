@@ -5,7 +5,7 @@ For a more robust setup, use `systemd` to manage the bot as a service. This ensu
     - **On Debian/Ubuntu:**
       ```sh
       sudo apt update
-      sudo apt install -y build-essential ffmpeg curl wget unzip git
+      sudo apt install -y build-essential ffmpeg curl wget unzip git zlib1g-dev
       ```
 
     - **Install Deno** (required for YouTube download challenges):
