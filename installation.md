@@ -38,7 +38,7 @@ For a more robust setup, use `systemd` to manage the bot as a service. This ensu
     ```
 
     ```bash
-    go generate .
+    go run github.com/AshokShau/gotdbot/scripts/tools@latest
     ```
 
 4.  **Install dependencies and run the bot:**
