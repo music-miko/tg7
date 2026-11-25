@@ -22,34 +22,70 @@ import "C"
 import (
 	"ashokshau/tgmusic/internal/bot"
 	"ashokshau/tgmusic/internal/calls"
+	"ashokshau/tgmusic/internal/cleanup"
 	"ashokshau/tgmusic/internal/config"
 	"ashokshau/tgmusic/internal/db"
+	"ashokshau/tgmusic/internal/disk"
 	"ashokshau/tgmusic/internal/downloader"
 	"ashokshau/tgmusic/ntgcalls"
 	"context"
 	"fmt"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/AshokShau/gotdbot"
+	"github.com/AshokShau/gotdbot/logger"
 )
 
 //go:generate go run github.com/AshokShau/gotdbot/scripts/tools
+
+var log = logger.New()
 
 func main() {
 	if err := config.LoadEnv(); err != nil {
 		panic(err)
 	}
 
+	downloadsDir, err := filepath.Abs(config.DownloadsDir)
+	if err != nil {
+		panic(err)
+	}
+	diskContext, stopDisk := context.WithCancel(context.Background())
+	defer stopDisk()
+	disk.Start(diskContext, downloadsDir)
+
 	if err := db.InitDatabase(); err != nil {
 		panic("failed to connect database: " + err.Error())
+	}
+	defer func() {
+		if err := db.Instance.Close(); err != nil {
+			log.Errorf("close database connection: %v", err)
+		}
+	}()
+	defer func() {
+		calls.Calls.StopAllClients()
+		_ = os.Remove(config.DownloadsDir)
+	}()
+
+	startedAssistants := 0
+	for _, session := range config.AssistantSessions {
+		started, err := calls.Calls.StartClient(config.ApiId, config.ApiHash, session.Value, session.EnvName)
+		if err != nil {
+			panic(fmt.Errorf("failed to start assistant %s: %w", session.EnvName, err))
+		}
+		if started {
+			startedAssistants++
+		}
+	}
+	if startedAssistants == 0 {
+		panic("no assistant could start; all configured assistants are frozen")
 	}
 
 	tdDir := "td"
 	_ = os.Remove(tdDir)
-	libPath := "./libtdjson.so.1.8.71"
-	manager := gotdbot.NewClientManager(libPath)
+	manager := gotdbot.NewClientManager("")
 	clientConfig := gotdbot.DefaultClientConfig()
 	clientConfig.AutoRetry = &gotdbot.AutoRetry{
 		ChatNotFound: true,
@@ -58,6 +94,7 @@ func main() {
 
 	clientConfig.DatabaseDirectory = tdDir
 	clientConfig.ParseMode = gotdbot.ParseModeHTML
+	clientConfig.FilesDirectory = filepath.Join(downloadsDir, "main")
 	client, err := manager.RegisterClient(config.ApiId, config.ApiHash, config.Token, clientConfig)
 	if err != nil {
 		panic("failed to register client: " + err.Error())
@@ -70,6 +107,7 @@ func main() {
 		}
 
 		dlClientConfig.DatabaseDirectory = tdDir + "_dl"
+		dlClientConfig.FilesDirectory = filepath.Join(downloadsDir, "dl")
 		_ = os.Remove(dlClientConfig.DatabaseDirectory)
 
 		dlClient, err := manager.RegisterClient(config.ApiId, config.ApiHash, config.DlBotToken, dlClientConfig)
@@ -82,26 +120,16 @@ func main() {
 		}
 	}
 
-	for i, session := range config.SessionStrings {
-		err = calls.Calls.StartClient(config.ApiId, config.ApiHash, session, fmt.Sprintf("_%d", i))
-		if err != nil {
-			panic("failed to start client: " + err.Error())
-		}
-	}
-
 	calls.Calls.RegisterHandlers(client)
-	bot.LoadModules(client)
-
-	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
-	downloader.StartDownloadsCleanup(cleanupCtx, tdDir)
+	cleanupScheduler, stopCleanup := cleanup.Start(client)
+	defer stopCleanup()
+	bot.LoadModules(client, cleanupScheduler.CancelChat)
 	bot.StartDailyBackups(client)
-
 	msg := fmt.Sprintf("Bot started\nNtgCalls %s", ntgcalls.Version())
 	client.Logger.Info(msg)
-	_, _ = client.SendTextMessage(config.LoggerId, msg, nil)
+	if _, err := client.SendMessage(config.LoggerId, msg, nil); err != nil {
+		log.Warnf("send startup message to logger chat: %v", err)
+	}
 	manager.Idle()
 	client.Logger.Info("The bot is shutting down...")
-	stopCleanup()
-	calls.Calls.StopAllClients()
-	_ = os.Remove(config.DownloadsDir)
 }
