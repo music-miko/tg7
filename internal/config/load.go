@@ -33,7 +33,7 @@ const (
 	defaultMaxSessions    = 10
 	defaultAutoPlay       = int32(10)
 	defaultAutoLeave      = true
-	defaultVideoPlayback  = false
+	defaultVideoPlayback  = true
 )
 
 var log = logger.New()
