@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	defaultDBName         = "Anon"
+	defaultDBName         = "dead"
 	defaultAPIURL         = "https://api.onegrab.fun"
 	defaultArcAPIURL      = "https://api.arcmusic.fun"
 	defaultService        = "youtube"
@@ -32,8 +32,8 @@ const (
 	defaultSessionType    = "pyrogram"
 	defaultMaxSessions    = 10
 	defaultAutoPlay       = int32(10)
-	defaultAutoLeave      = false
-	defaultVideoPlayback  = true
+	defaultAutoLeave      = true
+	defaultVideoPlayback  = false
 )
 
 var log = logger.New()
