@@ -1,0 +1,9 @@
+.idea
+td
+td_*
+*.db
+*.dat
+.env
+libntgcalls.a
+libtdjson.so.*
+/downloads
